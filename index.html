@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>逐句打字 · 跟着歌练打字</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2b303c;
+    --fg:#e8ecf3; --dim:#8b93a5; --ok:#3ecf8e; --bad:#ff5c72; --skip:#5a6172;
+    --accent:#5b8cff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+    font-family:"Microsoft YaHei","PingFang SC","Hiragino Sans GB",system-ui,sans-serif;}
+  body{padding:22px 16px 60px;display:flex;justify-content:center}
+  .wrap{width:100%;max-width:900px}
+  h1{font-size:19px;margin:0 0 4px;font-weight:600;letter-spacing:.5px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  label{display:block;font-size:13px;color:var(--dim);margin-bottom:6px}
+  input[type=text],textarea{
+    width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    color:var(--fg);padding:11px 12px;font-size:15px;font-family:inherit;outline:none}
+  input[type=text]:focus,textarea:focus{border-color:var(--accent)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .grow{flex:1 1 220px}
+  button{
+    background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:8px;
+    padding:10px 16px;font-size:14px;font-family:inherit;cursor:pointer;transition:.15s}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.primary:hover{filter:brightness(1.12)}
+  button.on{border-color:var(--accent);color:var(--accent)}
+  .hint{color:var(--dim);font-size:12.5px;line-height:1.7;margin-top:10px}
+  .results{margin-top:12px;max-height:300px;overflow:auto}
+  .res{display:flex;justify-content:space-between;gap:12px;align-items:center;
+    padding:11px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;cursor:pointer}
+  .res:hover{border-color:var(--accent);background:var(--panel2)}
+  .res b{font-weight:600;font-size:14.5px}
+  .res span{color:var(--dim);font-size:12.5px;display:block;margin-top:3px}
+  .tag{font-size:11.5px;padding:3px 8px;border-radius:20px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+  .tag.y{border-color:#2f6a52;color:var(--ok)}
+  .tag.n{border-color:#6a3a44;color:var(--bad)}
+  .bar{height:6px;background:var(--panel2);border-radius:20px;overflow:hidden;margin:6px 0 20px}
+  .bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
+  .meta{display:flex;justify-content:space-between;font-size:12.5px;color:var(--dim);margin-bottom:6px}
+  #curLine{
+    font-size:34px;line-height:1.55;letter-spacing:1px;min-height:120px;
+    padding:22px 6px;word-break:break-all;font-weight:600}
+  #curLine span.ok{color:var(--ok)}
+  #curLine span.bad{color:var(--bad);text-decoration:underline wavy var(--bad)}
+  #curLine span.todo{color:var(--fg)}
+  #curLine span.skip{color:var(--skip);font-weight:400}
+  .nextline{color:var(--dim);font-size:15px;min-height:24px;margin-bottom:18px}
+  #typingBox{font-size:20px;line-height:1.6;min-height:62px;resize:vertical}
+  .mini{font-size:12.5px;color:var(--dim)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px}
+  .stat b{display:block;font-size:22px;margin-bottom:4px}
+  .stat span{color:var(--dim);font-size:12.5px}
+  iframe{width:100%;aspect-ratio:16/9;border:1px solid var(--line);border-radius:8px;background:#000}
+  audio{width:100%;margin-top:8px}
+  details summary{cursor:pointer;color:var(--dim);font-size:13px;margin-bottom:10px}
+  .banner{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 14px;
+    border-radius:10px;border:1px solid var(--line);background:var(--panel);
+    font-size:13.5px;margin-bottom:16px;line-height:1.6}
+  .banner.warn{border-color:#7a5a2a;background:#241d12}
+  .banner.good{border-color:#2f6a52;background:#13211b}
+  .hidden{display:none !important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>逐句打字</h1>
+  <div class="sub">先唱这一句 → 你照着打这一句 → 打完自动唱下一句。单文件、无后端、无账号。</div>
+
+  <section id="setup">
+    <div class="card">
+      <label>1. 搜歌词（数据来自 lrclib，国内直连，不用翻墙）</label>
+      <div class="row">
+        <input type="text" id="q" class="grow" placeholder="歌名 歌手，例如：晴天 周杰伦">
+        <button class="primary" id="btnSearch">搜索</button>
+      </div>
+      <div class="results" id="results"></div>
+      <div class="hint">搜不到、或者搜出来的歌词不对？展开下面的「手动填歌词」，直接粘一份带时间轴的歌词进去就行。</div>
+    </div>
+
+    <div class="card">
+      <label>2. 选音频来源（决定能不能边唱边打）</label>
+      <div class="row" style="margin-bottom:12px">
+        <button id="srcLocal" class="on">本地音频文件（推荐）</button>
+        <button id="srcUrl">音频网址</button>
+        <button id="srcBili">B站链接</button>
+        <button id="srcNone">不要音频</button>
+      </div>
+      <div id="paneLocal">
+        <input type="file" id="fileLocal" accept="audio/*,video/*">
+        <div class="hint">选你这首歌的音频或视频文件。按句自动暂停、变速都靠它，体验最准。</div>
+      </div>
+      <div id="paneUrl" class="hidden">
+        <div class="row">
+          <input type="text" id="audioUrl" class="grow" placeholder="粘贴一个能直接播放的音频网址，比如以 .mp3 / .m4a 结尾那种">
+          <button id="btnUseUrl" class="primary">用这个链接</button>
+        </div>
+        <div class="hint">
+          必须是「直链」：在浏览器里打开它就能直接播放的那种。
+          网易云、QQ音乐的分享链接不行——那里面是一层加密播放器，不是音频本身，网页拿不到。
+        </div>
+      </div>
+      <div id="paneBili" class="hidden">
+        <input type="text" id="bvid" placeholder="B站链接或 BV 号，例如 BV1xx411c7mD">
+        <div class="hint" id="biliHint">
+          粘一次链接就行，全程不用下载。开始后按句走：<b>唱这一句 → 停住等你打 → 打完自动唱下一句</b>。
+          「上一句」「下一句」「重来本句」都会把播放器切到对应那一句，「暂停」会把播放器停掉不再出声。<br>
+          唯一的小毛病：每换一句播放器都要重新加载一次，句首会等一下（1～2 秒）；万一哪次没声音，点一下播放器上的喇叭就行。
+        </div>
+      </div>
+      <div id="paneNone" class="hidden">
+        <div class="hint">不播音频，只出歌词让你打。适合安静环境下单独练打字。</div>
+      </div>
+    </div>
+
+    <details class="card">
+      <summary>手动填歌词（搜不到时用这个）</summary>
+      <label>粘贴带时间轴的歌词，每行形如 [01:23.45]这一句歌词</label>
+      <textarea id="manualLrc" rows="8" placeholder="[00:12.00]故事的小黄花&#10;[00:15.30]从出生那年就飘着"></textarea>
+      <div class="row" style="margin-top:12px">
+        <button id="btnManual">用这份歌词开始</button>
+        <span class="mini">没有时间轴的纯文字歌词也能用，只是没法自动按句切歌。</span>
+      </div>
+    </details>
+  </section>
+
+  <section id="stage" class="hidden">
+    <div id="audioBanner" class="banner hidden"></div>
+    <input type="file" id="fileLocal2" accept="audio/*,video/*" class="hidden">
+    <div class="meta">
+      <span id="songTitle">—</span>
+      <span id="lineCounter">第 0 / 0 句</span>
+    </div>
+    <div class="bar"><i id="barFill"></i></div>
+
+    <div class="card">
+      <div id="curLine">—</div>
+      <div class="nextline" id="nextLine"></div>
+      <textarea id="typingBox" rows="1" autocomplete="off" autocorrect="off" autocapitalize="off"
+        spellcheck="false" placeholder="照着上面这行打，打完自动进下一句"></textarea>
+      <div class="row" style="margin-top:12px">
+        <button id="btnPrev">上一句</button>
+        <button class="primary" id="btnReplay">重来本句</button>
+        <button id="btnNext">下一句</button>
+        <button id="btnPause">暂停</button>
+        <button id="btnQuit">换一首</button>
+        <span class="mini" id="playState"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <span class="mini" style="min-width:74px">对不齐微调</span>
+        <input type="range" id="offset" min="-2000" max="2000" step="50" value="0" style="flex:1 1 200px">
+        <span class="mini" id="offsetVal" style="min-width:76px">+0 ms</span>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <span class="mini" style="min-width:74px">语速</span>
+        <button class="rate" data-rate="0.5">0.5x</button>
+        <button class="rate" data-rate="0.75">0.75x</button>
+        <button class="rate on" data-rate="1">1x</button>
+        <span class="mini">只有本地音频文件能变速</span>
+      </div>
+    </div>
+
+    <div class="card" id="audioCard">
+      <div id="biliHolder" class="hidden"></div>
+      <audio id="audioEl" controls></audio>
+    </div>
+
+    <div class="card hidden" id="statsCard">
+      <div class="stats">
+        <div class="stat"><b id="stAcc">—</b><span>准确率</span></div>
+        <div class="stat"><b id="stTime">—</b><span>用时</span></div>
+        <div class="stat"><b id="stChars">—</b><span>打对的字</span></div>
+        <div class="stat"><b id="stMiss">—</b><span>最常打错的字</span></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+"use strict";
+
+/* ---------- 0. 小工具 ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtTime = ms => {
+  if (!isFinite(ms) || ms < 0) ms = 0;
+  const m = Math.floor(ms / 60000), s = Math.floor(ms % 60000 / 1000);
+  return m + ":" + String(s).padStart(2, "0");
+};
+const fmtClock = sec => Math.floor(sec / 60) + " 分 " + Math.round(sec % 60) + " 秒";
+
+const SKIP_RE = /[\s\p{P}\p{S}]/u;
+function normChar(ch) {
+  if (SKIP_RE.test(ch)) return "";
+  const code = ch.charCodeAt(0);
+  if (code >= 0xFF01 && code <= 0xFF5E) return String.fromCharCode(code - 0xFEE0).toLowerCase();
+  return ch.toLowerCase();
+}
+function normText(s) {
+  let out = "";
+  for (const ch of s) { const n = normChar(ch); if (n) out += n; }
+  return out;
+}
+
+// 判定这一句算不算打完：长度够、而且一个字都不错
+function lineDone(targetNorm, typed) {
+  return targetNorm.length > 0 && typed.length >= targetNorm.length && typed === targetNorm;
+}
+// 大了几个字：多打的、打错的都算
+function countMistakes(targetNorm, typed) {
+  let wrong = Math.max(0, typed.length - targetNorm.length);
+  const len = Math.min(typed.length, targetNorm.length);
+  for (let i = 0; i < len; i++) if (typed[i] !== targetNorm[i]) wrong++;
+  return wrong;
+}
+
+// —— 繁转简：lrclib 上很多中文歌的歌词是繁体，不转就永远对不上你的简体输入法
+const T2S_PAIRS = "個个 們们 這这 來来 時时 說说 過过 對对 開开 關关 見见 現现 為为 麼么 樣样 與与 從从 還还 邊边 裡里 裏里 兒儿 幾几 點点 數数 沒没 話话 語语 詞词 詩诗 請请 誰谁 認认 識识 記记 讓让 該该 應应 問问 聽听 響响 聲声 顏颜 願愿 顧顾 愛爱 戀恋 夢梦 淚泪 傷伤 溫温 熱热 涼凉 陽阳 陰阴 風风 雲云 電电 綠绿 藍蓝 紅红 黃黄 燈灯 燭烛 車车 橋桥 門门 牆墙 樓楼 學学 書书 讀读 寫写 筆笔 紙纸 長长 遠远 強强 軟软 舊旧 樂乐 彈弹 絃弦 間间 終终 於于 經经 歷历 連连 續续 斷断 絕绝 會会 夠够 須须 準准 備备 錯错 誤误 確确 實实 髮发 頭头 臉脸 額额 頸颈 腳脚 體体 靈灵 鹹咸 給给 帶带 丟丢 尋寻 買买 賣卖 錢钱 價价 貴贵 際际 線线 積积 頂顶 幫帮 東东 國国 內内 塊块 場场 處处 氣气 靜静 動动 醫医 藥药 麵面 著着 綻绽 鮮鲜 艷艳 麗丽 華华 嬌娇 濃浓 淺浅 許许 釋释 眾众 獨独 單单 雙双 濕湿 曬晒 飛飞 緣缘 運运 撐撑 傘伞 熾炽 讚赞 醜丑 訊讯 網网 絡络 廣广 鐘钟 錶表 駛驶 騎骑 迴回 盪荡 搖摇 擺摆 轉转 彎弯 燦灿 爛烂 煙烟 霧雾 潤润 飄飘 遺遗 憶忆 寧宁 鬆松 緊紧 驗验 證证 據据 嚇吓 驚惊 屬属 閃闪 墜坠 擁拥 牽牵 諾诺 護护 擠挤 堅坚 膩腻 頰颊 撫抚 纏缠 繞绕 糾纠 結结 懷怀 墮堕 禱祷 傾倾 訴诉 謊谎 虛虚 偽伪 純纯 爍烁 紛纷 綿绵 賴赖 腦脑 難难 選选 擇择 棄弃 繼继 離离 係系 捨舍 暈晕 陣阵 鏡镜 週周 妳你 節节 卻却 滿满 乾干 幹干 採采 復复 複复 嚮向 繫系 聯联 掙挣 灑洒 淒凄 懇恳 誠诚 騙骗 謎谜 譜谱 嘆叹 湧涌 燙烫 燒烧 絢绚 繽缤 癒愈 觸触 癢痒 皺皱 輪轮 縫缝 補补 擊击 託托 誇夸 誘诱 誼谊 諷讽 謠谣 誦诵 唸念 疊叠 圓圆 園园 櫃柜 臨临 舉举 顆颗 顯显 鬥斗 鬧闹 鬱郁 瀉泻 慣惯 襯衬 剛刚 條条 務务 勝胜 勞劳 勢势 勵励 勸劝 區区 協协 嚴严 喪丧 團团 圖图 壞坏 壓压 墊垫 夾夹 奮奋 奪夺 妝妆 娛娱 媽妈 嬰婴 寶宝 審审 寬宽 導导 將将 專专 屆届 層层 帥帅 師师 帳帐 廳厅 張张 歸归 當当 發发 盡尽 監监 盤盘 睜睁 瞇眯 碼码 禮礼 種种 穩稳 窮穷 範范 築筑 簡简 籤签 類类 綢绸 維维 綱纲 綴缀 縮缩 總总 織织 罷罢 職职 聰聪 膚肤 艱艰 萬万 藝艺 號号 蟲虫 衝冲 裝装 褲裤 覺觉 觀观 規规 視视 親亲 計计 討讨 訓训 講讲 論论 謝谢 譯译 議议 變变 豐丰 貝贝 負负 財财 責责 費费 貼贴 資资 賽赛 贈赠 趕赶 躍跃 軍军 較较 載载 輝辉 辦办 達达 違违 適适 鄉乡 錄录 陸陆 隊队 隨随 險险 雜杂 項项 順顺 飯饭 餓饿 館馆 馬马 魚鱼 鳥鸟 齊齐 齒齿 龍龙 憐怜 慮虑 憂忧 擔担 顫颤 別别 嗎吗 進进 歲岁 歡欢 閒闲 圍围 喚唤 囑嘱 嚐尝 囂嚣 壇坛 墳坟 壘垒 寵宠 崗岗 島岛 幟帜 廈厦 廚厨 彌弥 彙汇 徹彻 恆恒 恥耻 悅悦 懸悬 懶懒 戰战 戲戏 戶户 拋抛 掛挂 揮挥 撲扑 擴扩 攔拦 攝摄 攜携 敘叙 曆历 樸朴 檢检 欄栏 權权 歐欧 歎叹 毀毁 決决 淨净 湊凑 灣湾 濱滨 瀟潇 災灾 煩烦 燼烬 爭争 爺爷 獸兽 獻献 環环 瑪玛 畢毕 療疗 瘋疯 癡痴 盃杯 磚砖 禍祸 稱称 竊窃 競竞 筍笋 篤笃 籌筹 簽签 籃篮 粵粤 級级 細细 組组 統统 絲丝 緒绪 編编 緩缓 練练 縛缚 績绩 縱纵 纖纤 罰罚 義义 習习 肅肃 脅胁 脈脉 艙舱 艦舰 蘇苏 蘿萝 訂订 貞贞 貧贫 貨货 販贩 貪贪 貸贷 賊贼 賓宾 賜赐 賞赏 賠赔 賢贤 質质 贊赞 趨趋 軌轨 輩辈 輯辑 輸输 轟轰 農农 邁迈 遲迟 醬酱 釀酿 鍾钟 鑑鉴 閉闭 階阶 隱隐 雞鸡 頁页 預预 領领 題题 駕驾 黨党 並并 亂乱 亙亘 亞亚 伋汲 伕夫 佇伫 佈布 佔占 佪徊 併并 侖仑 侶侣 侷局 俁俣 俠侠 倀伥 倆俩 倉仓 倖幸 倣仿 倫伦 偉伟 側侧 偵侦 偺咱 傑杰 傖伧 傢家 傭佣 傯偬 傳传 傴伛 債债 僂偻 僅仅 僇戮 僉佥 僑侨 僕仆 僥侥 僨偾 僱雇 儀仪 儂侬 億亿 儅当 儈侩 儉俭 儐傧 儔俦 儕侪 儘尽 償偿 優优 儲储 儷俪 儸罗 儺傩 儻傥 儼俨 兇凶 兌兑 兗兖 兩两 冊册 冑胄 冪幂 凈净 凍冻 凜凛 凱凯 刪删 剄刭 則则 剋克 剎刹 剝剥 剮剐 剴剀 創创 剷铲 劃划 劇剧 劉刘 劊刽 劌刿 劍剑 劑剂 劻匡 勁劲 勗勖 勛勋 勣积 勦剿 勱劢 勻匀 匭匦 匯汇 匱匮 卹恤 厙厍 厭厌 厲厉 厴厣 參参 叢丛 吋寸 吳吴 吶呐 呂吕 呎尺 咼呙 員员 唄呗 啞哑 啟启 啣衔 喫吃 喬乔 喲哟 嗆呛 嗇啬 嗚呜 嗩唢 嗶哔 嘍喽 嘔呕 嘖啧 嘗尝 嘜唛 嘩哗 嘮唠 嘯啸 嘰叽 嘵哓 嘸呒 噁恶 噓嘘 噠哒 噥哝 噦哕 噯嗳 噲哙 噴喷 噸吨 噹当 嚀咛 嚌哜 嚕噜 嚙啮 嚥咽 嚦呖 嚨咙 嚳喾 嚶嘤 囀啭 囁嗫 囅冁 囈呓 囉罗 囌苏 囪囱 圇囵 坰垧 埡垭 執执 堊垩 堝埚 堯尧 報报 堿碱 塋茔 塏垲 塒埘 塗涂 塢坞 塤埙 塵尘 塹堑 墑墒 墻墙 墾垦 壎埙 壙圹 壚垆 壟垄 壢坜 壩坝 壯壮 壺壶 壽寿 奐奂 奧奥 奩奁 姍姗 姦奸 姪侄 婁娄 婦妇 婭娅 媧娲 媯妫 媼媪 嫗妪 嫵妩 嫻娴 嬈娆 嬋婵 嬙嫱 嬝袅 嬡嫒 嬤嬷 嬪嫔 嬸婶 孃娘 孌娈 孫孙 孿孪 宮宫 寢寝 尷尴 屜屉 屝扉 屢屡 屨屦 岡冈 岧迢 峴岘 峽峡 崍崃 崙仑 崠岽 崢峥 崳嵛 嵐岚 嵒岩 嶁嵝 嶄崭 嶇岖 嶗崂 嶠峤 嶧峄 嶸嵘 嶺岭 嶼屿 嶽岳 巋岿 巑漓 巒峦 巔巅 巖岩 巰巯 巹卺 幀帧 幃帏 幗帼 幘帻 幣币 幬帱 庂仄 庫库 廁厕 廂厢 廄厩 廝厮 廟庙 廠厂 廡庑 廢废 廩廪 廬庐 廱痈 弒弑 弔吊 弳弪 彆别 彊强 彥彦 彫雕 彿佛 徑径 徠徕 徬旁 悵怅 悶闷 悽凄 惡恶 惱恼 惲恽 惻恻 愜惬 愨悫 愴怆 愷恺 愾忾 慄栗 慇殷 態态 慍愠 慘惨 慚惭 慟恸 慪怄 慫怂 慳悭 慶庆 慼戚 憊惫 憑凭 憒愦 憚惮 憤愤 憫悯 憮怃 憲宪 懌怿 懍檩 懞蒙 懟怼 懣懑 懨恹 懲惩 懺忏 懼惧 懾慑 戇戆 戉钺 戔戋 戧戗 戩戬 扐仂 扠叉 扢扦 扺抵 抃拚 抆擦 抎殒 抴曳 挶局 挾挟 捍扞 捫扪 捲卷 掃扫 掄抡 揀拣 揚扬 換换 揹背 搆构 損损 搗捣 搟擀 搶抢 摑掴 摜掼 摟搂 摯挚 摳抠 摶抟 摻掺 撈捞 撓挠 撚捻 撟挢 撢掸 撣掸 撥拨 撳揿 撻挞 撾挝 撿捡 擄掳 擋挡 擣捣 擬拟 擯摈 擰拧 擱搁 擲掷 擷撷 擻擞 擼撸 擾扰 攄摅 攆撵 攏拢 攖撄 攙搀 攛撺 攢攒 攣挛 攤摊 攪搅 攬揽 攷考 敗败 敵敌 斂敛 斃毙 斕斓 斬斩 旂旗 晉晋 晝昼 晞曦 暉晖 暘阳 暢畅 暫暂 暱昵 暸了 曄晔 曇昙 曉晓 曖暧 曠旷 朧胧 朮术 杇圬 枙栀 枴拐 柵栅 桿杆 梔栀 梟枭 棖枨 棗枣 棟栋 棧栈 棲栖 椏桠 楊杨 楓枫 楨桢 業业 極极 榦干 榪杩 榮荣 榿桤 槃盘 構构 槍枪 槓杠 槧椠 槨椁 槳桨 樁桩 樅枞 樑梁 標标 樞枢 樹树 樺桦 橈桡 機机 橢椭 橫横 檁檩 檉柽 檔档 檜桧 檣樯 檯台 檳槟 檸柠 檻槛 櫓橹 櫚榈 櫛栉 櫝椟 櫞橼 櫟栎 櫥橱 櫧槠 櫨栌 櫪枥 櫬榇 櫳栊 櫸榉 櫺棂 櫻樱 欏椤 欒栾 欖榄 欞棂 欽钦 歟欤 歿殁 殘残 殞殒 殤殇 殫殚 殮殓 殯殡 殲歼 殺杀 殼壳 毆殴 毌毋 毬球 毿毵 氈毡 氌氇 氫氢 氬氩 氳氲 氾泛 汍丸 汎泛 汙污 沖冲 況况 洩泄 洶汹 浬里 浹浃 涇泾 淥渌 淪沦 淵渊 淶涞 渙涣 減减 渦涡 測测 渾浑 湞浈 湯汤 溈沩 溝沟 溼湿 滄沧 滅灭 滌涤 滎荥 滬沪 滯滞 滲渗 滷卤 滸浒 滾滚 漁渔 漚沤 漢汉 漣涟 漬渍 漲涨 漸渐 漿浆 潁颍 潑泼 潔洁 潛潜 潟泻 潯浔 潰溃 潷滗 潿涠 澀涩 澆浇 澇涝 澗涧 澠渑 澤泽 澩泶 澮浍 澱淀 濁浊 濘泞 濛蒙 濟济 濤涛 濫滥 濰潍 濺溅 濼泺 濾滤 瀅滢 瀆渎 瀋渖 瀏浏 瀕濒 瀘泸 瀝沥 瀠潆 瀧泷 瀨濑 瀰弥 瀲潋 瀾澜 灃沣 灄滠 灕漓 灘滩 灝灏 灤滦 烏乌 烴烃 無无 煉炼 煒炜 煢茕 煥焕 煬炀 熒荧 熗炝 燁烨 燄焰 燉炖 燐磷 燜焖 營营 燬毁 燴烩 燾焘 爐炉 爾尔 牘牍 牪瘪 牴抵 犖荦 犛犁 犢犊 犧牺 狀状 狹狭 狽狈 猙狰 猶犹 猻狲 獄狱 獅狮 獎奖 獪狯 獫猃 獮猕 獰狞 獲获 獵猎 獷犷 獺獭 獼猕 玀猡 玆兹 玨珏 珮佩 琺珐 琿珲 瑋玮 瑣琐 瑤瑶 瑩莹 瑯琅 璉琏 璣玑 璦瑷 璽玺 瓊琼 瓏珑 瓔璎 瓖镶 瓚瓒 甌瓯 甕瓮 產产 甦苏 畝亩 畫画 畬畲 異异 疇畴 疿痱 痙痉 痠酸 痲麻 痳麻 痺痹 瘍疡 瘓痪 瘞瘗 瘡疮 瘧疟 瘺瘘 癆痨 癇痫 癉瘅 癘疠 癟瘪 癤疖 癥症 癩癞 癬癣 癭瘿 癮瘾 癰痈 癱瘫 癲癫 皚皑 皰疱 皸皲 皻隳 盜盗 盞盏 盧卢 眥眦 睏困 睞睐 睪睾 瞞瞒 瞭了 瞼睑 矇蒙 矓胧 矚瞩 矯矫 砲炮 硃朱 硤硖 硨砗 硯砚 碩硕 碭砀 磣碜 磧碛 磯矶 磽硗 礎础 礙碍 礦矿 礪砺 礫砾 礬矾 礱砻 祅祆 祇只 祐佑 祕秘 祿禄 禎祯 禦御 禪禅 禰祢 禿秃 秈籼 稅税 稈秆 稜棱 稟禀 穀谷 穌稣 穎颖 穡穑 穢秽 穫获 窩窝 窪洼 窯窑 窶窭 窺窥 竄窜 竅窍 竇窦 笻筇 筧笕 箄箅 箇个 箋笺 箏筝 篋箧 篠筱 篩筛 篳筚 簀箦 簍篓 簑蓑 簞箪 簣篑 簫箫 簷檐 簾帘 籐藤 籜箨 籟籁 籠笼 籥龠 籩笾 籪簖 籬篱 籮箩 籲吁 糝糁 糞粪 糢馍 糧粮 糰团 糲粝 糴籴 糶粜 紀纪 紂纣 約约 紆纡 紇纥 紈纨 紉纫 紋纹 納纳 紐纽 紓纾 紕纰 紗纱 紜纭 紡纺 紱绂 紲绁 紳绅 紹绍 紺绀 紼绋 紿绐 絀绌 絆绊 絎绗 絛绦 絞绞 絨绒 絳绦 絹绢 綁绑 綃绡 綆绠 綈绨 綏绥 綜综 綞缍 綣绻 綬绶 綰绾 綵彩 綸纶 綹绺 綺绮 綽绰 綾绫 緄绲 緇缁 緋绯 緗缃 緘缄 緙缂 緝缉 緞缎 締缔 緡缗 緦缌 緬缅 緯纬 緱缑 緲缈 緶缏 緹缇 緻致 縈萦 縉缙 縊缢 縋缒 縐绉 縑缣 縚绦 縝缜 縞缟 縟缛 縣县 縭缡 縯演 縲缧 縳缚 縴纤 縵缦 縶絷 縷缕 縹缥 繃绷 繅缫 繆缪 繈襁 繒缯 繕缮 繚缭 繡绣 繢缋 繩绳 繪绘 繭茧 繯缳 繰缲 繳缴 繹绎 繾缱 纈缬 纊纩 纍累 纓缨 纔才 纘缵 纜缆 缽钵 罈坛 罌罂 罵骂 羅罗 羆罴 羈羁 羋芈 羥羟 羨羡 翹翘 耑端 耬耧 聖圣 聞闻 聳耸 聵聩 聶聂 聹聍 聾聋 脛胫 脣唇 脧睃 脩修 脫脱 脹胀 腎肾 腡脶 腫肿 腸肠 膃腽 膠胶 膽胆 膾脍 膿脓 臍脐 臏膑 臘腊 臚胪 臟脏 臠脔 臥卧 臺台 興兴 艣橹 艤舣 艫舻 艸艹 芐苄 芻刍 苧苎 茍苟 茲兹 荊荆 莊庄 莖茎 莢荚 莧苋 菴庵 萇苌 萊莱 萵莴 葉叶 葒荭 葦苇 葯药 葷荤 蒔莳 蒞莅 蒼苍 蓀荪 蓋盖 蓮莲 蓯苁 蓽荜 蔆菱 蔔卜 蔞蒌 蔣蒋 蔥葱 蔦茑 蔭荫 蕁荨 蕆蒇 蕎荞 蕓芸 蕕莸 蕘荛 蕢蒉 蕩荡 蕪芜 蕭萧 蕷蓣 薈荟 薊蓟 薌芗 薑姜 薔蔷 薟莶 薦荐 薧槁 薩萨 薺荠 藎荩 藪薮 藶苈 藷薯 藹蔼 藺蔺 蘄蕲 蘆芦 蘊蕴 蘋苹 蘗蘖 蘚藓 蘞蔹 蘢茏 蘭兰 蘺蓠 虜虏 虧亏 蛺蛱 蛻蜕 蜆蚬 蝕蚀 蝦虾 蝸蜗 螄蛳 螞蚂 螢萤 螻蝼 蟄蛰 蟈蝈 蟣虮 蟬蝉 蟯蛲 蟶蛏 蟻蚁 蠅蝇 蠆虿 蠐蛴 蠑蝾 蠔蚝 蠟蜡 蠣蛎 蠱蛊 蠶蚕 蠻蛮 衊蔑 術术 衛卫 衹只 袞衮 裊袅 製制 褳裢 褸褛 褻亵 襖袄 襝裣 襠裆 襤褴 襪袜 襬摆 襲袭 覈核 覓觅 覘觇 覡觋 覦觎 覬觊 覯觏 覲觐 覷觑 覽览 覿觌 觔筋 觴觞 觶觯 訃讣 訌讧 訐讦 訕讪 訖讫 訛讹 訝讶 訟讼 訢欣 訣诀 訥讷 訪访 設设 訶诃 診诊 註注 証证 詁诂 詆诋 詎讵 詐诈 詒诒 詔诏 評评 詘诎 詛诅 詠咏 詡诩 詢询 詣诣 試试 詫诧 詬诟 詭诡 詮诠 詰诘 詳详 詵诜 詼诙 詿诖 誄诔 誅诛 誆诓 誌志 誑诳 誒诶 誕诞 誚诮 誡诫 誣诬 誥诰 誨诲 課课 誶谇 誹诽 調调 諂谄 諄谆 談谈 諉诿 諍诤 諏诹 諑诼 諒谅 諗谂 諛谀 諜谍 諞谝 諢诨 諤谔 諦谛 諧谐 諫谏 諭谕 諮谘 諱讳 諳谙 諶谌 諸诸 諺谚 諼谖 謀谋 謁谒 謂谓 謄誊 謅诌 謐谧 謔谑 謖谡 謗谤 謙谦 謚谥 謨谟 謫谪 謬谬 謳讴 謹谨 謾谩 譎谲 譏讥 譖谮 譙谯 譚谭 譟噪 譫谵 譴谴 譽誉 讎雠 讒谗 讕谰 讖谶 讜谠 讞谳 豈岂 豎竖 豔艳 豬猪 貍狸 貓猫 貢贡 貫贯 貯贮 貰贳 貲赀 貳贰 貶贬 貺贶 貽贻 貿贸 賀贺 賁贲 賂赂 賃赁 賄贿 賅赅 賈贾 賑赈 賒赊 賕赇 賚赉 賡赓 賤贱 賦赋 賧赕 賬账 賭赌 賺赚 賻赙 購购 賾赜 贄贽 贅赘 贍赡 贏赢 贐赆 贓赃 贖赎 贗赝 贛赣 趙赵 趲趱 跡迹 跼局 踐践 踡蜷 踫碰 踴踊 蹌跄 蹕跸 蹠跖 蹣蹒 蹤踪 蹺跷 躉趸 躊踌 躋跻 躑踯 躒跞 躓踬 躕蹰 躚跹 躡蹑 躥蹿 躦躜 躪躏 軀躯 軋轧 軒轩 軔轫 軛轭 軫轸 軸轴 軹轵 軺轺 軻轲 軼轶 軾轼 輅辂 輇辁 輊轾 輒辄 輓挽 輔辅 輕轻 輛辆 輜辎 輞辋 輟辍 輥辊 輦辇 輳辏 輻辐 輾辗 輿舆 轂毂 轄辖 轅辕 轆辘 轍辙 轎轿 轔辚 轡辔 轢轹 轤轳 辭辞 辮辫 辯辩 迆迤 迺乃 逕迳 遊游 遙遥 遜逊 遞递 遷迁 遼辽 邇迩 邏逻 邐逦 郃合 郟郏 郵邮 鄆郓 鄒邹 鄔邬 鄖郧 鄧邓 鄭郑 鄰邻 鄲郸 鄴邺 鄶郐 鄺邝 酈郦 醃腌 醞酝 釁衅 釃酾 釅酽 釐厘 釓钆 釔钇 釕钌 釗钊 釘钉 釙钋 針针 釣钓 釤钐 釦扣 釧钏 釩钒 釬钎 釵钗 釷钍 釹钕 鈀钯 鈁钫 鈄钭 鈉钠 鈍钝 鈐钤 鈑钣 鈔钞 鈕钮 鈞钧 鈣钙 鈥钬 鈦钛 鈧钪 鈮铌 鈰铈 鈳钶 鈴铃 鈷钴 鈸钹 鈹铍 鈺钰 鈽钸 鈾铀 鈿钿 鉀钾 鉅钜 鉆钻 鉈铊 鉉铉 鉋刨 鉍铋 鉑铂 鉗钳 鉚铆 鉛铅 鉞钺 鉤钩 鉦钲 鉬钼 鉭钽 鉸铰 鉺铒 鉻铬 鉿铪 銀银 銃铳 銅铜 銑铣 銓铨 銖铢 銘铭 銚铫 銜衔 銠铑 銣铷 銥铱 銦铟 銨铵 銩铥 銪铕 銫铯 銬铐 銲焊 銳锐 銷销 銹锈 銻锑 銼锉 鋁铝 鋃锒 鋅锌 鋇钡 鋌铤 鋏铗 鋒锋 鋝锊 鋟锓 鋤锄 鋦锔 鋨锇 鋪铺 鋮铖 鋯锆 鋰锂 鋱铽 鋸锯 鋼钢 錁锞 錆锖 錈锩 錐锥 錒锕 錕锟 錘锤 錙锱 錚铮 錛锛 錟锬 錠锭 錦锦 錨锚 錫锡 錮锢 錳锰 錸铼 鍆钔 鍇锴 鍊链 鍋锅 鍍镀 鍔锷 鍘铡 鍛锻 鍤锸 鍥锲 鍬锹 鍰锾 鍵键 鍶锶 鍺锗 鎂镁 鎊镑 鎔熔 鎖锁 鎗枪 鎘镉 鎢钨 鎣蓥 鎦镏 鎧铠 鎩铩 鎪锼 鎬镐 鎮镇 鎰镒 鎳镍 鎵镓 鏃镞 鏇镟 鏈链 鏌镆 鏍镙 鏑镝 鏗铿 鏘锵 鏜镗 鏝镘 鏞镛 鏟铲 鏢镖 鏤镂 鏨錾 鏵铧 鏷镤 鏹镪 鏽锈 鐃铙 鐉铣 鐋铴 鐐镣 鐒铹 鐓镦 鐔镡 鐙镫 鐠镨 鐨镄 鐫镌 鐮镰 鐲镯 鐳镭 鐵铁 鐸铎 鐺铛 鐽钽 鐿镱 鑄铸 鑊镬 鑌镔 鑒鉴 鑠铄 鑣镳 鑤刨 鑭镧 鑰钥 鑲镶 鑷镊 鑼锣 鑽钻 鑾銮 鑿凿 閂闩 閆闫 閌闶 閎闳 閏闰 閑闲 閔闵 閘闸 閡阂 閣阁 閤合 閥阀 閨闺 閩闽 閫阃 閬阆 閭闾 閱阅 閶阊 閹阉 閻阎 閼阏 閽阍 閾阈 閿阌 闃阒 闆板 闈闱 闊阔 闋阕 闌阑 闐阗 闔阖 闕阙 闖闯 闞阚 闡阐 闢辟 闥闼 阨厄 阯址 陘陉 陜陕 陝陕 陳陈 隄堤 隉陧 隕陨 隴陇 隸隶 隻只 雋隽 雖虽 雛雏 霑沾 霤溜 霽霁 靂雳 靄霭 靚靓 靦腼 靨靥 鞏巩 鞦秋 韁缰 韃鞑 韆千 韉鞯 韋韦 韌韧 韓韩 韙韪 韜韬 韞韫 韻韵 頃顷 頇顸 頊顼 頌颂 頎颀 頏颃 頑顽 頒颁 頓顿 頗颇 頜颌 頡颉 頤颐 頦颏 頷颔 頹颓 頻频 顎颚 顓颛 顙颡 顛颠 顢颟 顥颢 顰颦 顱颅 顳颞 顴颧 颮飑 颯飒 颱台 颳刮 颶飓 颺扬 颼飕 飆飙 飢饥 飩饨 飪饪 飫饫 飭饬 飲饮 飴饴 飼饲 飽饱 飾饰 餃饺 餅饼 餉饷 養养 餌饵 餑饽 餒馁 餘余 餚肴 餛馄 餞饯 餡馅 餳饧 餵喂 餼饩 餽馈 餾馏 餿馊 饃馍 饅馒 饈馐 饉馑 饋馈 饌馔 饑饥 饒饶 饗飨 饜餍 饞馋 馭驭 馮冯 馱驮 馳驰 馴驯 駁驳 駐驻 駑驽 駒驹 駔驵 駘骀 駙驸 駝驼 駟驷 駢骈 駭骇 駱骆 駿骏 騁骋 騅骓 騍骒 騏骐 騖骛 騫骞 騭骘 騮骝 騰腾 騶驺 騷骚 騸骟 騾骡 驀蓦 驁骜 驂骖 驃骠 驄骢 驅驱 驊骅 驍骁 驏骣 驕骄 驛驿 驟骤 驢驴 驤骧 驥骥 驪骊 骯肮 髏髅 髒脏 髕髌 髖髋 鬍胡 鬚须 鬢鬓 鬨哄 鬩阋 鬮阄 魎魉 魘魇 魯鲁 魴鲂 魷鱿 鮐鲐 鮑鲍 鮒鲋 鮚鲒 鮞鲕 鮪鲔 鮫鲛 鮭鲑 鯀鲧 鯁鲠 鯇鲩 鯉鲤 鯊鲨 鯔鲻 鯖鲭 鯛鲷 鯡鲱 鯢鲵 鯤鲲 鯧鲳 鯨鲸 鯪鲮 鯫鲰 鯰鲶 鯽鲫 鰈鲽 鰉鳇 鰍鳅 鰒鳆 鰓鳃 鰣鲥 鰥鳏 鰨鳎 鰩鳐 鰭鳍 鰱鲢 鰲鳌 鰳鳓 鰷鲦 鰹鲣 鰻鳗 鰾鳔 鱈鳕 鱉鳖 鱒鳟 鱔鳝 鱖鳜 鱗鳞 鱘鲟 鱟鲎 鱧鳢 鱭鲚 鱷鳄 鱸鲈 鱺鲡 鳧凫 鳩鸠 鳳凤 鳴鸣 鳶鸢 鴆鸩 鴇鸨 鴉鸦 鴕鸵 鴛鸳 鴝鸲 鴟鸱 鴣鸪 鴦鸯 鴨鸭 鴯鸸 鴰鸹 鴻鸿 鴿鸽 鵂鸺 鵑鹃 鵒鹆 鵓鹁 鵜鹈 鵝鹅 鵠鹄 鵡鹉 鵪鹌 鵬鹏 鵯鹎 鵲鹊 鶇鸫 鶉鹑 鶘鹕 鶚鹗 鶩鹜 鶯莺 鶱骞 鶴鹤 鶻鹘 鶼鹣 鶿鹚 鷂鹞 鷓鹧 鷗鸥 鷙鸷 鷚鹨 鷥鸶 鷦鹪 鷯鹩 鷲鹫 鷳鹇 鷴鹇 鷸鹬 鷹鹰 鷺鹭 鸕鸬 鸚鹦 鸛鹳 鸝鹂 鸞鸾 鹵卤 鹺鹾 鹼硷 鹽盐 麥麦 麩麸 黌黉 黲黪 黴霉 黷黩 黽黾 黿鼋 鼇鳌 鼉鼍 鼕冬 鼴鼹 齋斋 齏齑 齔龀 齙龅 齜龇 齟龃 齠龆 齡龄 齣出 齦龈 齧啮 齪龊 齬龉 齲龋 齷龌 龐庞 龔龚 龕龛 龜龟 龦? 龧? 龨? 龩? 龪? 龫? 龬? 龭? 龮? 龯? 龰? 龱? 龲? 龳? 龴? 龵? 龶? 龷? 龸? 龹? 龺? 龻? 龼? 龽? 龾? 龿? 鿀? 鿁? 鿂? 鿃? 鿄? 鿅? 鿆? 鿇? 鿈? 鿉? 鿊? 鿋? 鿌? 鿍? 鿎? 鿏? 鿐? 鿑? 鿒? 鿓? 鿔? 鿕? 鿖? 鿗? 鿘? 鿙? 鿚? 鿛? 鿜? 鿝? 鿞? 鿟? 鿠? 鿡? 鿢? 鿣? 鿤? 鿥? 鿦? 鿧? 鿨? 鿩? 鿪? 鿫? 鿬? 鿭? 鿮? 鿯? 鿰? 鿱? 鿲? 鿳? 鿴? 鿵? 鿶? 鿷? 鿸? 鿹? 鿺? 鿻? 鿼? 鿽? 鿾? 鿿?";
+const T2S = new Map();
+for (const p of T2S_PAIRS.split(" ")) { if (p.length === 2) T2S.set(p[0], p[1]); }
+const T2S_PHRASES = [["甚麼", "什么"], ["什麼", "什么"]];
+function toSimplified(s) {
+  let out = String(s);
+  for (const [a, b] of T2S_PHRASES) out = out.split(a).join(b);
+  let res = "";
+  for (const ch of out) res += T2S.get(ch) || ch;
+  return res;
+}
+
+// 歌词文件开头的作词作曲这类制作信息，不算歌词
+const CREDIT_RE = /^(作词|作曲|编曲|制作人|出品|监制|混音|录音|母带|和声|吉他|贝斯|键盘|弦乐|统筹|企划|发行|演唱|原唱|翻唱|纯音乐|instrumental)/i;
+const CREDIT_SHORT_RE = /^(词|曲)\s*[:：]/;
+function isCredit(text) { return CREDIT_RE.test(text) || CREDIT_SHORT_RE.test(text); }
+
+/* ---------- 1. 歌词：lrclib 搜索 + LRC 解析 ---------- */
+async function searchLyrics(query) {
+  const url = "https://lrclib.net/api/search?q=" + encodeURIComponent(query);
+  const res = await fetch(url, { headers: { "Accept": "application/json" } });
+  if (!res.ok) throw new Error("接口返回 " + res.status);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error("返回格式异常");
+  return data.slice(0, 12);
+}
+
+const LRC_TIME = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+function parseLRC(raw, fallbackDurationMs) {
+  const out = [];
+  for (const rawLine of String(raw).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/^\[[a-zA-Z#][^\]]*\]$/.test(line)) continue;   // [ar:] [ti:] [by:] 这类元信息
+    LRC_TIME.lastIndex = 0;
+    const stamps = [];
+    let m;
+    while ((m = LRC_TIME.exec(line)) !== null) {
+      const mm = parseInt(m[1], 10), ss = parseInt(m[2], 10);
+      let frac = 0;
+      if (m[3] !== undefined) {
+        const f = m[3];
+        frac = f.length === 1 ? parseInt(f, 10) * 100
+             : f.length === 2 ? parseInt(f, 10) * 10
+             : parseInt(f, 10);
+      }
+      stamps.push(mm * 60000 + ss * 1000 + frac);
+    }
+    const text = line.replace(LRC_TIME, "").trim();
+    if (!text || normText(text) === "") continue;
+    if (stamps.length === 0) out.push({ start: null, end: null, text });
+    else for (const st of stamps) out.push({ start: st, end: null, text });
+  }
+  out.sort((a, b) => {
+    if (a.start === null && b.start === null) return 0;
+    if (a.start === null) return 1;
+    if (b.start === null) return -1;
+    return a.start - b.start;
+  });
+  const timed = out.filter(l => l.start !== null);
+  for (let i = 0; i < timed.length; i++) {
+    const next = timed[i + 1];
+    // 正常情况唱到下一句开头；中间有大段纯伴奏时最多唱 12 秒就停下等你打
+    let end = next ? Math.min(next.start - 60, timed[i].start + 12000)
+                   : (fallbackDurationMs ? Math.min(fallbackDurationMs, timed[i].start + 12000)
+                                         : timed[i].start + 5000);
+    if (end <= timed[i].start + 250) end = timed[i].start + 250;
+    timed[i].end = end;
+  }
+  return out;
+}
+
+function hasTimeline(lines) { return lines.some(l => l.start !== null); }
+
+/* ---------- 2. 播放器：本地文件 / B站嵌入 / 无音频 ---------- */
+const audioEl = $("audioEl");
+
+const player = {
+  kind: "local",
+  bvid: "",
+  segEnd: null,
+  raf: null,
+  biliTimer: null,
+  offset: 0,
+  rate: 1,
+
+  setKind(kind) { this.kind = kind; this.stop(); },
+  canPlay() {
+    if (this.kind === "local" || this.kind === "url") return !!audioEl.src;
+    if (this.kind === "bili") return !!this.bvid;
+    return false;
+  },
+  stop() {
+    if (this.raf) { cancelAnimationFrame(this.raf); this.raf = null; }
+    if (this.biliTimer) { clearTimeout(this.biliTimer); this.biliTimer = null; }
+    this.segEnd = null;
+    if (this.kind === "bili") { const h = $("biliHolder"); if (h) h.innerHTML = ""; }
+    try { audioEl.pause(); } catch (e) {}
+  },
+  playSegment(startMs, endMs) {
+    const s = Math.max(0, startMs + this.offset);
+    const e = Math.max(s + 250, endMs + this.offset);
+    if ((this.kind === "local" || this.kind === "url") && audioEl.src) {
+      // 音频文件刚选完还没读完就定位会播放失败，等它读完再来一次
+      if (audioEl.readyState === 0) {
+        audioEl.addEventListener("loadedmetadata",
+          () => this.playSegment(startMs, endMs), { once: true });
+        return true;
+      }
+      audioEl.playbackRate = this.rate;
+      try { audioEl.currentTime = s / 1000; } catch (err) {}
+      audioEl.play().catch(() => {
+        setPlayState("⚠️ 浏览器没让自动播放，点一下「重来本句」");
+      });
+      this.segEnd = e / 1000;
+      if (this.raf) cancelAnimationFrame(this.raf);
+      const tick = () => {
+        if (this.segEnd === null) return;
+        if (audioEl.currentTime >= this.segEnd) {
+          audioEl.pause();
+          this.segEnd = null; this.raf = null;
+          onSegmentEnd();
+          return;
+        }
+        this.raf = requestAnimationFrame(tick);
+      };
+      this.raf = requestAnimationFrame(tick);
+      return true;
+    }
+    if (this.kind === "bili" && this.bvid) {
+      $("biliHolder").innerHTML = biliIframe(s / 1000, true);
+      this.segEnd = null;
+      // B站播放器只会「从这一秒开始播」，不会在那句结尾自己停。
+      // 所以：等它出声（约 2 秒）+ 这一句的实际时长，到点就把播放器撤掉，声音立刻断，停下来等你打。
+      if (this.biliTimer) clearTimeout(this.biliTimer);
+      this.biliTimer = setTimeout(() => {
+        this.biliTimer = null;
+        $("biliHolder").innerHTML = "";   // 撤掉播放器＝声音停住
+        onSegmentEnd();
+      }, 2000 + Math.max(1000, e - s));
+      return true;
+    }
+    return false;
+  }
+};
+
+/* ---------- 3. 打字引擎 ---------- */
+const state = {
+  lines: [], title: "", idx: 0,
+  composing: false, advanceTimer: null,
+  stats: { startedAt: 0, typed: 0, errors: 0, wrong: {}, done: false }
+};
+let target = { items: [], norm: "", normChars: [] };
+let typedNorm = "";
+let lastLen = 0;
+
+function buildTarget(text) {
+  const items = [...text].map(ch => ({ ch, n: normChar(ch) }));
+  return { items, norm: items.map(i => i.n).join(""), normChars: items.filter(i => i.n !== "").map(i => i.ch) };
+}
+
+function renderLine() {
+  let html = "", nIdx = 0;
+  for (const it of target.items) {
+    if (it.n === "") { html += '<span class="skip">' + esc(it.ch) + "</span>"; continue; }
+    let cls = "todo";
+    if (nIdx < typedNorm.length) cls = typedNorm[nIdx] === it.n ? "ok" : "bad";
+    html += '<span class="' + cls + '">' + esc(it.ch) + "</span>";
+    nIdx++;
+  }
+  $("curLine").innerHTML = html || "—";
+  const next = state.lines[state.idx + 1];
+  $("nextLine").textContent = next ? "下一句：" + next.text : "最后一句了";
+}
+
+function renderCounter() {
+  const total = state.lines.length;
+  $("lineCounter").textContent = "第 " + Math.min(state.idx + 1, total) + " / " + total + " 句";
+  $("barFill").style.width = total ? (state.idx / total * 100) + "%" : "0%";
+}
+
+function onInput() {
+  if (state.composing) return;
+  typedNorm = normText($("typingBox").value);
+  if (typedNorm.length > lastLen) {
+    for (let i = lastLen; i < typedNorm.length; i++) {
+      state.stats.typed++;
+      if (typedNorm[i] !== target.norm[i]) {
+        state.stats.errors++;
+        const ch = target.normChars[i];
+        if (ch) state.stats.wrong[ch] = (state.stats.wrong[ch] || 0) + 1;
+      }
+    }
+  }
+  lastLen = typedNorm.length;
+  renderLine();
+
+  // 规则：这一句必须一个字都不错，才自动接着唱下一句。
+  // 打错了只标红、卡住不放行，改对了它自己就走。
+  const full = target.norm.length > 0 && typedNorm.length >= target.norm.length;
+  const perfect = lineDone(target.norm, typedNorm);
+  if (perfect) {
+    setPlayState("✅ 这句打对了，接着唱下一句…");
+    if (state.advanceTimer) clearTimeout(state.advanceTimer);
+    state.advanceTimer = setTimeout(() => nextLine(true), 550);
+  } else {
+    if (state.advanceTimer) { clearTimeout(state.advanceTimer); state.advanceTimer = null; }
+    if (full) {
+      setPlayState("❌ 有 " + countMistakes(target.norm, typedNorm) + " 个字不对，改对了才会接着唱下一句");
+    }
+  }
+}
+
+/* ---------- 4. 主流程：先唱这一句 → 等你打 → 打完下一句 ---------- */
+function setPlayState(t) { $("playState").textContent = t; }
+
+function startLine(i, autoPlay) {
+  if (i >= state.lines.length) { finish(); return; }
+  state.idx = i;
+  const line = state.lines[i];
+  target = buildTarget(line.text);
+  typedNorm = ""; lastLen = 0;
+  const box = $("typingBox");
+  box.value = ""; box.disabled = false; box.focus();
+  renderLine(); renderCounter();
+  if (state.advanceTimer) { clearTimeout(state.advanceTimer); state.advanceTimer = null; }
+  if (!state.stats.startedAt) state.stats.startedAt = Date.now();
+  saveProgress();
+
+  if (line.start === null) { setPlayState("（这一句没有时间轴，直接打）"); return; }
+  if (!player.canPlay()) { setPlayState("⚠️ 现在没有声音，看上面那行的提示"); return; }
+  if (autoPlay) {
+    setPlayState("♪ 正在唱这一句…");
+    player.playSegment(line.start, line.end);
+  } else {
+    setPlayState("已暂停，按「重来本句」播放");
+  }
+}
+
+function onSegmentEnd() { setPlayState("⏸ 唱完了，等你打完这一句"); }
+
+/* ---------- B站播放器：每句用带 t= 秒数的地址重新加载，实现「唱这一句」 ---------- */
+function biliSrc(sec, autoplay) {
+  return "https://player.bilibili.com/player.html?bvid=" + encodeURIComponent(player.bvid) +
+    "&autoplay=" + (autoplay ? 1 : 0) + "&danmaku=0&high_quality=1&t=" + Math.max(0, Math.floor(sec));
+}
+
+// allow="autoplay" 是关键：让播放器一加载就直接出声，而不是默认静音
+// sandbox 里不放开 allow-popups / allow-top-navigation：点视频不会再弹新标签页跳去 B站
+function biliIframe(sec, autoplay) {
+  return '<iframe src="' + biliSrc(sec, autoplay) + '"' +
+    ' allow="autoplay; fullscreen; encrypted-media"' +
+    ' sandbox="allow-scripts allow-same-origin allow-forms"' +
+    ' scrolling="no" frameborder="0" allowfullscreen="true"></iframe>';
+}
+
+function nextLine() {
+  if (state.advanceTimer) { clearTimeout(state.advanceTimer); state.advanceTimer = null; }
+  player.stop();
+  startLine(state.idx + 1, true);
+}
+
+function replayLine() {
+  if (state.advanceTimer) { clearTimeout(state.advanceTimer); state.advanceTimer = null; }
+  player.stop();
+  startLine(state.idx, true);
+}
+
+function finish() {
+  player.stop();
+  state.stats.done = true;
+  $("barFill").style.width = "100%";
+  $("lineCounter").textContent = "全部打完了";
+  showStats();
+  $("statsCard").classList.remove("hidden");
+  setPlayState("🎉 这首练完了");
+  localStorage.removeItem("typingProgress");
+}
+
+function accuracy() {
+  const t = state.stats.typed;
+  return t ? Math.max(0, Math.round((t - state.stats.errors) / t * 100)) : 100;
+}
+
+function showStats() {
+  const worst = Object.entries(state.stats.wrong).sort((a, b) => b[1] - a[1]).slice(0, 4)
+    .map(p => p[0] + "×" + p[1]).join("  ") || "无";
+  $("stAcc").textContent = accuracy() + "%";
+  $("stTime").textContent = fmtClock((Date.now() - (state.stats.startedAt || Date.now())) / 1000);
+  $("stChars").textContent = Math.max(0, state.stats.typed - state.stats.errors) + " 字";
+  $("stMiss").textContent = worst;
+}
+
+function saveProgress() {
+  try {
+    localStorage.setItem("typingProgress", JSON.stringify({
+      title: state.title, idx: state.idx, lines: state.lines, savedAt: Date.now()
+    }));
+  } catch (e) {}
+}
+
+/* ---------- 5. 界面接线 ---------- */
+function enterStage(lines, title, startIdx) {
+  // 一律转成简体，再丢掉作词作曲这类制作信息
+  state.lines = lines
+    .map(l => ({ start: l.start, end: l.end, text: toSimplified(l.text).trim() }))
+    .filter(l => normText(l.text) !== "" && !isCredit(l.text));
+  if (!state.lines.length) { alert("没有可用的歌词行"); return; }
+  state.title = toSimplified(title || "未命名");
+  state.idx = 0;
+  state.stats = { startedAt: 0, typed: 0, errors: 0, wrong: {}, done: false };
+  $("songTitle").textContent = state.title;
+  $("setup").classList.add("hidden");
+  $("stage").classList.remove("hidden");
+  $("statsCard").classList.add("hidden");
+  updateAudioBanner();
+  startLine(typeof startIdx === "number" ? startIdx : 0, true);
+}
+
+function backToSetup() {
+  player.stop();
+  state.lines = [];          // 防止在选歌界面选音频时，后台又把上一首放出来
+  $("stage").classList.add("hidden");
+  $("setup").classList.remove("hidden");
+}
+
+let localFileName = "";
+
+// 屏幕上永远用大白话告诉你：现在到底有没有声音、为什么没有
+function updateAudioBanner() {
+  const b = $("audioBanner");
+  if (!state.lines.length) { b.classList.add("hidden"); return; }
+  b.classList.remove("hidden");
+  let html = "";
+  if (!hasTimeline(state.lines)) {
+    b.className = "banner warn";
+    html = "<span>⚠️ 这份歌词没有时间轴，没法按句自动唱。</span>" +
+      '<button id="bnLyric">回去换一份带时间轴的歌词</button>';
+  } else if (player.kind === "none") {
+    b.className = "banner warn";
+    html = "<span>🔇 现在是「不要音频」模式，所以听不到声音。</span>" +
+      '<button id="bnPick" class="primary">选个音频文件</button>';
+  } else if (player.kind === "local" && !audioEl.src) {
+    b.className = "banner warn";
+    html = "<span>⚠️ 还没选音频文件，所以只有歌词没有声音。</span>" +
+      '<button id="bnPick" class="primary">选音频文件</button>' +
+      '<span class="mini">选好后这一句会立刻开始唱</span>';
+  } else if (player.kind === "local") {
+    b.className = "banner good";
+    html = "<span>🎵 音频已加载：" + esc(localFileName || "已选文件") + "</span>" +
+      '<button id="bnPick">换一个</button>';
+  } else if (player.kind === "url" && !audioEl.src) {
+    b.className = "banner warn";
+    html = "<span>⚠️ 还没有可用的音频网址，所以只有歌词没有声音。</span>" +
+      '<button id="bnPick" class="primary">回去填网址</button>';
+  } else if (player.kind === "url") {
+    b.className = "banner good";
+    html = "<span>🎵 网络音频：" + esc(localFileName || "已填链接") + "</span>" +
+      '<button id="bnPick">换一个</button>';
+  } else if (player.kind === "bili" && !player.bvid) {
+    b.className = "banner warn";
+    html = "<span>⚠️ 还没填 B站视频的 BV 号，所以只有歌词没有声音。</span>" +
+      '<button id="bnPick" class="primary">回去填 B站链接</button>';
+  } else {
+    b.className = "banner good";
+    html = "<span>🎵 B站按句播放：上一句 / 下一句 / 重来本句 都会把播放器切到对应那一句，打完自动接下一句。</span>" +
+      '<span class="mini">每句开头要等播放器加载 1～2 秒；万一没声音，点一下播放器上的喇叭就行。</span>';
+  }
+  b.innerHTML = html;
+  const pick = $("bnPick");
+  if (pick) pick.addEventListener("click", () => {
+    if (player.kind === "url") backToSetup();
+    else $("fileLocal2").click();
+  });
+  const ly = $("bnLyric");
+  if (ly) ly.addEventListener("click", backToSetup);
+}
+
+function loadLocalFile(f) {
+  if (!f) return;
+  localFileName = f.name;
+  audioEl.src = URL.createObjectURL(f);
+  audioEl.load();
+  pickSource("local");
+  updateAudioBanner();
+  if (state.lines.length) replayLine();   // 选完文件立刻把当前这句唱一遍
+}
+
+$("btnSearch").addEventListener("click", doSearch);
+$("q").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+
+async function doSearch() {
+  const q = $("q").value.trim();
+  if (!q) return;
+  const box = $("results");
+  box.innerHTML = '<div class="hint">搜索中…</div>';
+  try {
+    const list = await searchLyrics(q);
+    if (!list.length) {
+      box.innerHTML = '<div class="hint">没搜到。换个写法试试，或者展开下面的「手动填歌词」。</div>';
+      return;
+    }
+    box.innerHTML = "";
+    for (const item of list) {
+      const synced = item.syncedLyrics && item.syncedLyrics.trim();
+      const div = document.createElement("div");
+      div.className = "res";
+      div.innerHTML =
+        "<div><b>" + esc(item.trackName || "未知歌名") + "</b><span>" +
+        esc(item.artistName || "未知歌手") +
+        (item.albumName ? " · " + esc(item.albumName) : "") +
+        (item.duration ? " · " + fmtTime(item.duration * 1000) : "") + "</span></div>" +
+        '<span class="tag ' + (synced ? "y" : "n") + '">' + (synced ? "带时间轴" : "无时间轴") + "</span>";
+      div.addEventListener("click", () => {
+        if (!synced) {
+          alert("这个版本没有时间轴。换个版本试试，或者用下面的「手动填歌词」粘自己的 LRC。");
+          return;
+        }
+        enterStage(parseLRC(item.syncedLyrics, item.duration ? item.duration * 1000 : 0),
+          item.trackName + " — " + item.artistName);
+      });
+      box.appendChild(div);
+    }
+  } catch (err) {
+    box.innerHTML = '<div class="hint">搜索失败（' + esc(err.message || err) +
+      '）。可能是网络或跨域限制，用下面的「手动填歌词」粘一份 LRC 一样能练。</div>';
+  }
+}
+
+$("btnManual").addEventListener("click", () => {
+  const raw = $("manualLrc").value.trim();
+  if (!raw) { alert("先把歌词贴进去"); return; }
+  const lines = parseLRC(raw, 0);
+  if (!lines.length) { alert("没解析出歌词，检查一下格式"); return; }
+  enterStage(lines, "手动导入的歌词");
+});
+
+function pickSource(kind) {
+  player.setKind(kind);
+  $("srcLocal").classList.toggle("on", kind === "local");
+  $("srcUrl").classList.toggle("on", kind === "url");
+  $("srcBili").classList.toggle("on", kind === "bili");
+  $("srcNone").classList.toggle("on", kind === "none");
+  $("paneLocal").classList.toggle("hidden", kind !== "local");
+  $("paneUrl").classList.toggle("hidden", kind !== "url");
+  $("paneBili").classList.toggle("hidden", kind !== "bili");
+  $("paneNone").classList.toggle("hidden", kind !== "none");
+  audioEl.classList.toggle("hidden", kind !== "local" && kind !== "url");
+  $("biliHolder").classList.toggle("hidden", kind !== "bili");
+  updateAudioBanner();
+}
+$("srcLocal").addEventListener("click", () => pickSource("local"));
+$("srcUrl").addEventListener("click", () => pickSource("url"));
+$("srcBili").addEventListener("click", () => pickSource("bili"));
+$("srcNone").addEventListener("click", () => pickSource("none"));
+
+$("fileLocal").addEventListener("change", e => loadLocalFile(e.target.files && e.target.files[0]));
+$("fileLocal2").addEventListener("change", e => loadLocalFile(e.target.files && e.target.files[0]));
+
+$("btnUseUrl").addEventListener("click", () => {
+  const u = $("audioUrl").value.trim();
+  if (!u) { alert("先把音频网址粘进去"); return; }
+  localFileName = u;
+  audioEl.src = u;
+  audioEl.load();
+  pickSource("url");
+  updateAudioBanner();
+  if (state.lines.length) replayLine();
+});
+
+$("bvid").addEventListener("input", e => {
+  const v = e.target.value.trim();
+  const m = v.match(/BV[0-9A-Za-z]+/);
+  player.bvid = m ? m[0] : "";
+  // 提前把播放器加载好，等下开始练的时候就不用等了
+  if (player.bvid && player.kind === "bili" && !state.lines.length) {
+    $("biliHolder").innerHTML = biliIframe(0, false);
+  }
+});
+
+$("btnPrev").addEventListener("click", () => {
+  if (state.idx <= 0) return;
+  if (state.advanceTimer) { clearTimeout(state.advanceTimer); state.advanceTimer = null; }
+  player.stop();
+  startLine(state.idx - 1, true);
+});
+
+$("btnReplay").addEventListener("click", replayLine);
+$("btnNext").addEventListener("click", () => nextLine());
+$("btnQuit").addEventListener("click", backToSetup);
+$("btnPause").addEventListener("click", () => {
+  if (player.kind === "bili") {
+    player.stop();   // 会顺手把播放器撤掉，声音立刻停
+    setPlayState("⏸ 已停。点「重来本句」继续这一句，或「下一句」接着往下");
+    return;
+  }
+  player.stop();
+  setPlayState("⏸ 已暂停，打完这一句按回车进下一句");
+});
+
+// 回车不再直接跳下一句（中文输入法里回车常用来选字，误按会跳句）。
+// 打对了本来就会自动走；没打对按回车只会提醒你，想跳过请点「下一句」按钮。
+$("typingBox").addEventListener("keydown", e => {
+  if (e.key !== "Enter" || state.composing || e.isComposing) return;
+  e.preventDefault();
+  if (target.norm.length > 0 && typedNorm === target.norm) nextLine();
+  else setPlayState("还没打对哦。想跳过这一句，就点上面的「下一句」");
+});
+$("typingBox").addEventListener("compositionstart", () => { state.composing = true; });
+$("typingBox").addEventListener("compositionend", () => {
+  state.composing = false;
+  setTimeout(onInput, 0);
+});
+$("typingBox").addEventListener("input", onInput);
+
+$("offset").addEventListener("input", e => {
+  player.offset = parseInt(e.target.value, 10);
+  $("offsetVal").textContent = (player.offset >= 0 ? "+" : "") + player.offset + " ms";
+});
+document.querySelectorAll(".rate").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".rate").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+    player.rate = parseFloat(b.dataset.rate);
+    if (audioEl.src) audioEl.playbackRate = player.rate;
+  });
+});
+audioEl.addEventListener("ended", () => { player.segEnd = null; onSegmentEnd(); });
+audioEl.addEventListener("error", () => {
+  if (!audioEl.src) return;
+  alert("这个音频文件浏览器打不开。换一个常见的格式试试，比如 mp3、m4a 或 mp4。");
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "F2") { e.preventDefault(); replayLine(); }
+});
+
+pickSource("local");
+
+(function restore() {
+  try {
+    const raw = localStorage.getItem("typingProgress");
+    if (!raw) return;
+    const p = JSON.parse(raw);
+    if (!p || !p.lines || !p.lines.length) return;
+    const bar = document.createElement("div");
+    bar.className = "card";
+    bar.innerHTML = '<div class="row"><span class="mini">上次「' + esc(p.title || "") +
+      "」练到第 " + (p.idx + 1) + ' 句。</span><button id="btnResume">接着上次练</button></div>';
+    $("setup").prepend(bar);
+    $("btnResume").addEventListener("click", () => {
+      enterStage(p.lines, p.title, Math.min(p.idx, p.lines.length - 1));
+    });
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>
