@@ -201,6 +201,12 @@
         <button class="rate on" data-rate="1">1x</button>
         <span class="mini">只有本地音频文件能变速</span>
       </div>
+      <div class="row" style="margin-top:12px">
+        <span class="mini" style="min-width:74px">每句结尾</span>
+        <input type="range" id="endAdj" min="-3000" max="3000" step="100" value="0" style="flex:1 1 200px">
+        <span class="mini" id="endAdjVal" style="min-width:76px">+0 ms</span>
+      </div>
+      <div class="hint">「每句结尾」是修最后一处对不齐的：某句歌还没唱完就停了，就往右拖；已经唱到下一句才停，就往左拖。调好点一下松手，它会重播这一句给你听效果。</div>
     </div>
 
     <div class="card" id="audioCard">
@@ -404,6 +410,7 @@ const player = {
   raf: null,
   biliTimer: null,
   offset: 0,
+  endAdj: 0,          // 每句结尾的早晚微调（毫秒）
   rate: 1,
 
   setKind(kind) { this.kind = kind; this.stop(); },
@@ -421,7 +428,7 @@ const player = {
   },
   playSegment(startMs, endMs) {
     const s = Math.max(0, startMs + this.offset);
-    const e = Math.max(s + 250, endMs + this.offset);
+    const e = Math.max(s + 250, endMs + this.offset + this.endAdj);
     if ((this.kind === "local" || this.kind === "url") && audioEl.src) {
       // 音频文件刚选完还没读完就定位会播放失败，等它读完再来一次
       if (audioEl.readyState === 0) {
@@ -482,6 +489,7 @@ let biliContinuous = false;
 let biliAutoPicked = false;   // B站视频是自动找到的，还是自己粘的
 function isContinuous() { return player.kind === "bili" && biliContinuous; }
 const IS_WECHAT = /MicroMessenger/i.test(navigator.userAgent);
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
 function buildTarget(text) {
   const items = [...text].map(ch => ({ ch, n: normChar(ch) }));
@@ -837,7 +845,10 @@ function updateAudioBanner() {
         : "B站按句播放") + " —— 唱一句 → 你打 → 打对自动接下一句。</span>" +
       (biliAutoPicked ? '<button id="bnBili">换个视频</button>' : "") +
       '<button id="bnPlayNow">▶ 重播这一句</button>' +
-      '<span class="mini">万一没声音，点一下「重播这一句」。</span>';
+      (IS_MOBILE
+        ? '<button id="bnToContinuous" class="primary">换成跟唱（全程不用再点）</button>' +
+          '<span class="mini">手机浏览器不让网页自己出声，所以每句都要你点一下播放键；换成跟唱的话，开头点一次，之后音乐一直放，你只管打字。</span>'
+        : '<span class="mini">万一没声音，点一下「重播这一句」。</span>');
   }
   b.innerHTML = html;
   const pick = $("bnPick");
@@ -850,6 +861,11 @@ function updateAudioBanner() {
   if (sb) sb.addEventListener("click", () => {
     const kw = String(state.title || "").replace(/\s*[—\-|]\s*/g, " ").trim();
     window.open("https://search.bilibili.com/all?keyword=" + encodeURIComponent(kw), "_blank");
+  });
+  const tc = $("bnToContinuous");
+  if (tc) tc.addEventListener("click", () => {
+    setBiliMode(true);
+    startContinuousMusic();
   });
   const pn = $("bnPlayNow");
   if (pn) pn.addEventListener("click", () => {
@@ -1136,7 +1152,35 @@ $("typingBox").addEventListener("input", onInput);
 $("offset").addEventListener("input", e => {
   player.offset = parseInt(e.target.value, 10);
   $("offsetVal").textContent = (player.offset >= 0 ? "+" : "") + player.offset + " ms";
+  savePlayerTuning();
 });
+$("offset").addEventListener("change", () => { if (state.lines.length) replayLine(); });
+
+$("endAdj").addEventListener("input", e => {
+  player.endAdj = parseInt(e.target.value, 10);
+  $("endAdjVal").textContent = (player.endAdj >= 0 ? "+" : "") + player.endAdj + " ms";
+  savePlayerTuning();
+});
+$("endAdj").addEventListener("change", () => { if (state.lines.length) replayLine(); });
+
+function savePlayerTuning() {
+  try {
+    localStorage.setItem("playerTuning", JSON.stringify({ offset: player.offset, endAdj: player.endAdj }));
+  } catch (e) {}
+}
+(function restoreTuning() {
+  try {
+    const t = JSON.parse(localStorage.getItem("playerTuning") || "null");
+    if (t) {
+      player.offset = t.offset || 0;
+      player.endAdj = t.endAdj || 0;
+      $("offset").value = player.offset;
+      $("offsetVal").textContent = (player.offset >= 0 ? "+" : "") + player.offset + " ms";
+      $("endAdj").value = player.endAdj;
+      $("endAdjVal").textContent = (player.endAdj >= 0 ? "+" : "") + player.endAdj + " ms";
+    }
+  } catch (e) {}
+})();
 document.querySelectorAll(".rate").forEach(b => {
   b.addEventListener("click", () => {
     document.querySelectorAll(".rate").forEach(x => x.classList.remove("on"));
