@@ -316,6 +316,27 @@ function pickBestVideo(items, wantMs) {
   return best;
 }
 
+// 把 B站 搜索接口的返回解析成候选列表（兼容中转服务包一层的写法）
+function parseBiliItems(text) {
+  let body = String(text || "");
+  try {
+    const outer = JSON.parse(body);
+    if (outer && typeof outer.contents === "string") body = outer.contents;
+  } catch (e) {}
+  const items = [];
+  let json = null;
+  try { json = JSON.parse(body); } catch (e) {}
+  if (json && json.data && Array.isArray(json.data.result)) {
+    for (const r of json.data.result) {
+      if (r && r.bvid) items.push({ bvid: r.bvid, title: cleanBiliTitle(r.title), durMs: durToMs(r.duration) });
+    }
+  } else {
+    const re = /"bvid"\s*:\s*"(BV[0-9A-Za-z]{8,})"[\s\S]{0,500}?"title"\s*:\s*"([^"]{0,90})"/g;
+    let m; while ((m = re.exec(body)) !== null) items.push({ bvid: m[1], title: cleanBiliTitle(m[2]), durMs: 0 });
+  }
+  return items;
+}
+
 /* ---------- 1. 歌词：lrclib 搜索 + LRC 解析 ---------- */
 async function searchLyrics(query) {
   const url = "https://lrclib.net/api/search?q=" + encodeURIComponent(query);
@@ -641,48 +662,54 @@ function enterStage(lines, title, startIdx, durationMs) {
   }
 }
 
-// 借中转服务问 B站 的搜索接口
+async function fetchTimeout(url, ms) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, { signal: ctl.signal }); }
+  finally { clearTimeout(t); }
+}
+
+// 找视频：直连 + 好几个中转服务同时开工，谁先拿到结果用谁。
+// 单靠一条路很容易被 B站 拦掉（它会拒绝机房 IP），多路并试才稳。
 async function autoFindBiliVideo(keyword, wantMs) {
   const api = "https://api.bilibili.com/x/web-interface/search/type?search_type=video&page=1&keyword=" +
     encodeURIComponent(keyword);
-  const via = [
-    u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
-    u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
-    u => "https://corsproxy.io/?" + encodeURIComponent(u)
+  const enc = encodeURIComponent(api);
+  const urls = [
+    api,
+    "https://api.allorigins.win/raw?url=" + enc,
+    "https://api.allorigins.win/get?url=" + enc,
+    "https://api.codetabs.com/v1/proxy?quest=" + enc,
+    "https://corsproxy.io/?" + enc,
+    "https://cors.eu.org/" + api
   ];
-  for (const build of via) {
-    let timer = null;
-    try {
-      const ctl = new AbortController();
-      timer = setTimeout(() => ctl.abort(), 9000);
-      const res = await fetch(build(api), { signal: ctl.signal });
-      const text = await res.text();
-      const items = [];
-      let json = null;
-      try { json = JSON.parse(text); } catch (e) {}
-      if (json && json.data && Array.isArray(json.data.result)) {
-        for (const r of json.data.result) {
-          if (r && r.bvid) items.push({ bvid: r.bvid, title: cleanBiliTitle(r.title), durMs: durToMs(r.duration) });
-        }
-      } else {
-        const re = /"bvid"\s*:\s*"(BV[0-9A-Za-z]{8,})"[\s\S]{0,500}?"title"\s*:\s*"([^"]{0,90})"/g;
-        let m; while ((m = re.exec(text)) !== null) items.push({ bvid: m[1], title: cleanBiliTitle(m[2]), durMs: 0 });
-      }
-      if (items.length) {
-        const best = pickBestVideo(items, wantMs);
-        if (best) { best.candidates = items.slice(0, 20); return best; }
-      }
-    } catch (e) {
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+  const tries = urls.map(u => (async () => {
+    const res = await fetchTimeout(u, 9000);
+    const text = await res.text();
+    const items = parseBiliItems(text);
+    if (!items.length) throw new Error("empty");
+    const best = pickBestVideo(items, wantMs);
+    if (!best) throw new Error("none");
+    best.candidates = items.slice(0, 20);
+    return best;
+  })());
+  if (typeof Promise.any !== "function") {          // 老浏览器就一条条试
+    for (const t of tries) { try { return await t; } catch (e) {} }
+    return null;
   }
-  return null;
+  try { return await Promise.any(tries); } catch (e) { return null; }
 }
 
 async function autoAttachBili() {
   const kw = String(state.title || "").replace(/\s*[—\-|]\s*/g, " ").trim();
   if (!kw) return;
+  const saved = loadBiliChoice(state.title);          // 这首歌你以前指定过视频，直接用
+  if (saved && saved.bvid) {
+    player.bvid = saved.bvid; biliAutoPicked = true; player.biliTitle = saved.biliTitle || "";
+    updateAudioBanner();
+    if (isContinuous()) startContinuousMusic(); else replayLine();
+    return;
+  }
   setPlayState("🔍 正在自动找 B站 上这首歌的视频…");
   const hit = await autoFindBiliVideo(kw, state.durationMs || 0);
   if (hit && hit.bvid) {
@@ -694,8 +721,21 @@ async function autoAttachBili() {
     if (isContinuous()) startContinuousMusic(); else replayLine();   // 立刻从这一句开始唱
     renderCandidates();
   } else {
-    setPlayState("没自动找到 B站 视频，点上面横幅里的「B站视频」自己粘一个");
+    setPlayState("没自动找到 B站 视频。点上面横幅里的「B站视频」粘一个，以后这首歌就记住了");
   }
+}
+
+function saveBiliChoice(title, bvid, biliTitle) {
+  if (!title || !bvid) return;
+  try {
+    const m = JSON.parse(localStorage.getItem("biliChoices") || "{}");
+    m[title] = { bvid, biliTitle: biliTitle || "" };
+    localStorage.setItem("biliChoices", JSON.stringify(m));
+  } catch (e) {}
+}
+function loadBiliChoice(title) {
+  try { return JSON.parse(localStorage.getItem("biliChoices") || "{}")[title] || null; }
+  catch (e) { return null; }
 }
 
 let lastCandidates = [];
@@ -716,6 +756,7 @@ function renderCandidates() {
       player.bvid = b.dataset.bv;
       biliAutoPicked = true;
       player.biliTitle = b.dataset.t;
+      saveBiliChoice(state.title, b.dataset.bv, b.dataset.t);
       updateAudioBanner();
       if (isContinuous()) startContinuousMusic(); else replayLine();
       $("biliMsg2").textContent = "已换成：" + b.dataset.t;
@@ -775,6 +816,7 @@ function updateAudioBanner() {
       '<button id="bnPick" class="primary">本地文件</button>' +
       '<button id="bnBili">B站视频</button>' +
       '<button id="bnUrl">音频直链</button>' +
+      '<button id="bnSearchBili">在B站搜索这首歌</button>' +
       '<span class="mini">' + (IS_WECHAT
         ? "微信里出声需要你亲手点一下；实在不行，点右上角「···」→「在浏览器打开」"
         : "选好后这一句会立刻开始唱") + '</span>';
@@ -804,6 +846,11 @@ function updateAudioBanner() {
   if (bb) bb.addEventListener("click", () => showAudioSetup("bili"));
   const bu = $("bnUrl");
   if (bu) bu.addEventListener("click", () => showAudioSetup("url"));
+  const sb = $("bnSearchBili");
+  if (sb) sb.addEventListener("click", () => {
+    const kw = String(state.title || "").replace(/\s*[—\-|]\s*/g, " ").trim();
+    window.open("https://search.bilibili.com/all?keyword=" + encodeURIComponent(kw), "_blank");
+  });
   const pn = $("bnPlayNow");
   if (pn) pn.addEventListener("click", () => {
     if (isContinuous()) { if ($("biliHolder").innerHTML.trim()) syncMusicToLine(); else startContinuousMusic(); }
@@ -832,6 +879,7 @@ async function applyBiliFromInput() {
     player.bvid = r.bv;
     biliAutoPicked = false;
     player.biliTitle = "";
+    saveBiliChoice(state.title, r.bv, "");     // 记住这首歌用哪个视频
     pickSource("bili");
     updateAudioBanner();
     $("biliMsg2").innerHTML = "✅ 已识别：" + esc(r.bv) + (isContinuous() ? "（正在开始播放，若没声音点一下上面的播放按钮）" : "");
