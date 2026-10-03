@@ -191,7 +191,7 @@
     <div class="card">
       <div class="row">
         <span class="mini" style="min-width:74px">对不齐微调</span>
-        <input type="range" id="offset" min="-2000" max="2000" step="50" value="0" style="flex:1 1 200px">
+        <input type="range" id="offset" min="-15000" max="15000" step="100" value="0" style="flex:1 1 200px">
         <span class="mini" id="offsetVal" style="min-width:76px">+0 ms</span>
       </div>
       <div class="row" style="margin-top:12px">
@@ -206,7 +206,11 @@
         <input type="range" id="endAdj" min="-3000" max="3000" step="100" value="0" style="flex:1 1 200px">
         <span class="mini" id="endAdjVal" style="min-width:76px">+0 ms</span>
       </div>
-      <div class="hint">「每句结尾」是修最后一处对不齐的：某句歌还没唱完就停了，就往右拖；已经唱到下一句才停，就往左拖。调好点一下松手，它会重播这一句给你听效果。</div>
+      <div class="hint">
+        <b>对不齐微调</b>：整首歌整体对不上时用——你打的这句歌词和实际唱的不是同一句，就往左或往右拖（比如视频开头有前奏，就要往右加几秒）。<br>
+        <b>每句结尾</b>：整体对齐后还差一点的用——某句歌没唱完就停了往右拖，唱到下一句还没停就往左拖。<br>
+        两个都是松手就重播这一句给你听效果，调好会按这首歌记住，下次打开还在。
+      </div>
     </div>
 
     <div class="card" id="audioCard">
@@ -457,16 +461,28 @@ const player = {
       return true;
     }
     if (this.kind === "bili" && this.bvid) {
-      $("biliHolder").innerHTML = biliIframe(s / 1000, true);
+      const holder = $("biliHolder");
+      holder.innerHTML = biliIframe(s / 1000, true);
       this.segEnd = null;
-      // B站播放器只会「从这一秒开始播」，不会在那句结尾自己停。
-      // 所以：等它出声（约 2 秒）+ 这一句的实际时长，到点就把播放器撤掉，声音立刻断，停下来等你打。
       if (this.biliTimer) clearTimeout(this.biliTimer);
-      this.biliTimer = setTimeout(() => {
+      const lineLen = Math.max(1000, e - s);
+      const cut = () => {
         this.biliTimer = null;
-        $("biliHolder").innerHTML = "";   // 撤掉播放器＝声音停住
+        holder.innerHTML = "";            // 撤掉播放器＝声音停住
         onSegmentEnd();
-      }, 2000 + Math.max(1000, e - s));
+      };
+      // B站播放器只会「从这一秒开始播」，不会在那句结尾自己停。
+      // 所以：等播放器页面加载完（不是瞎猜时间）+ 一点起播时间 + 这一句的实际时长，到点撤掉它。
+      let armed = false;
+      const arm = extra => {
+        if (armed) return;
+        armed = true;
+        if (this.biliTimer) clearTimeout(this.biliTimer);
+        this.biliTimer = setTimeout(cut, extra + lineLen);
+      };
+      const fr = holder.querySelector("iframe");
+      if (fr) fr.addEventListener("load", () => arm(1200), { once: true });
+      this.biliTimer = setTimeout(() => arm(1500), 8000);   // 兜底：load 事件万一不来
       return true;
     }
     return false;
@@ -651,6 +667,7 @@ function enterStage(lines, title, startIdx, durationMs) {
   if (!state.lines.length) { alert("没有可用的歌词行"); return; }
   state.title = toSimplified(title || "未命名");
   state.durationMs = durationMs || 0;
+  resetAudioForNewSong();        // 换歌了，上一个视频/音频和链接一律清掉，不许串台
   state.idx = 0;
   state.stats = { startedAt: 0, typed: 0, errors: 0, wrong: {}, done: false };
   $("songTitle").textContent = state.title;
@@ -661,13 +678,37 @@ function enterStage(lines, title, startIdx, durationMs) {
   startLine(typeof startIdx === "number" ? startIdx : 0, true);
   if (isContinuous()) startContinuousMusic();   // 跟唱：这一次是手指点出来的，手机也出声
   // 没给音频的话，自动去 B站 找这首歌的视频，用户什么都不用做
-  if (player.kind !== "bili" && !player.bvid && !audioEl.src) {
+  if (player.kind === "none") {
+    // 用户明确选了「不要音频」，就尊重这个选择，不自动去接视频
+  } else if (player.kind !== "bili" && !player.bvid && !audioEl.src) {
     player.kind = "bili";
     pickSource("bili");
     autoAttachBili();
   } else if (player.kind === "bili" && !player.bvid) {
     autoAttachBili();
   }
+}
+
+// 换一首歌时必须把上一首的音频痕迹全部清干净：
+// 否则会出现「换了歌，唱的还是上一首」这种串台，链接框里也还留着上一首的地址
+function resetAudioForNewSong() {
+  player.stop();
+  const h = $("biliHolder"); if (h) h.innerHTML = "";
+  try { audioEl.pause(); audioEl.removeAttribute("src"); audioEl.load(); } catch (e) {}
+  localFileName = "";
+  player.bvid = "";
+  player.biliTitle = "";
+  biliAutoPicked = false;
+  lastCandidates = [];
+  const f = $("fileLocal"); if (f) f.value = "";
+  const f2 = $("fileLocal2"); if (f2) f2.value = "";
+  const bi = $("bvid"); if (bi) bi.value = "";
+  const bi2 = $("biliInput2"); if (bi2) bi2.value = "";
+  const u = $("audioUrl"); if (u) u.value = "";
+  const u2 = $("urlInput2"); if (u2) u2.value = "";
+  const m1 = $("biliMsg"); if (m1) m1.innerHTML = "";
+  const m2 = $("biliMsg2"); if (m2) m2.textContent = "";
+  renderCandidates();
 }
 
 async function fetchTimeout(url, ms) {
@@ -714,6 +755,9 @@ async function autoAttachBili() {
   const saved = loadBiliChoice(state.title);          // 这首歌你以前指定过视频，直接用
   if (saved && saved.bvid) {
     player.bvid = saved.bvid; biliAutoPicked = true; player.biliTitle = saved.biliTitle || "";
+    if (typeof saved.offset === "number" || typeof saved.endAdj === "number") {
+      applyTuning(saved.offset || 0, saved.endAdj || 0);
+    }
     updateAudioBanner();
     if (isContinuous()) startContinuousMusic(); else replayLine();
     return;
@@ -725,6 +769,11 @@ async function autoAttachBili() {
     biliAutoPicked = true;
     player.biliTitle = hit.title;
     lastCandidates = hit.candidates || [];
+    // 自动对齐：视频比歌词长出来的那一段，多半就是开头的前奏，直接用这个差值当初始偏移
+    if (hit.durMs && state.durationMs) {
+      const est = Math.max(-20000, Math.min(20000, hit.durMs - state.durationMs));
+      if (Math.abs(est) >= 1000) applyTuning(est, player.endAdj);
+    }
     updateAudioBanner();
     if (isContinuous()) startContinuousMusic(); else replayLine();   // 立刻从这一句开始唱
     renderCandidates();
@@ -737,13 +786,26 @@ function saveBiliChoice(title, bvid, biliTitle) {
   if (!title || !bvid) return;
   try {
     const m = JSON.parse(localStorage.getItem("biliChoices") || "{}");
-    m[title] = { bvid, biliTitle: biliTitle || "" };
+    m[title] = {
+      bvid, biliTitle: biliTitle || "",
+      offset: player.offset, endAdj: player.endAdj     // 这首歌的对齐参数一起记下来
+    };
     localStorage.setItem("biliChoices", JSON.stringify(m));
   } catch (e) {}
 }
 function loadBiliChoice(title) {
   try { return JSON.parse(localStorage.getItem("biliChoices") || "{}")[title] || null; }
   catch (e) { return null; }
+}
+
+// 把对齐参数同时写到播放器和滑块上
+function applyTuning(offset, endAdj) {
+  player.offset = Math.round(offset) || 0;
+  player.endAdj = Math.round(endAdj) || 0;
+  const o = $("offset"), e = $("endAdj");
+  if (o) { o.value = player.offset; $("offsetVal").textContent = (player.offset >= 0 ? "+" : "") + player.offset + " ms"; }
+  if (e) { e.value = player.endAdj; $("endAdjVal").textContent = (player.endAdj >= 0 ? "+" : "") + player.endAdj + " ms"; }
+  savePlayerTuning();
 }
 
 let lastCandidates = [];
@@ -1154,14 +1216,20 @@ $("offset").addEventListener("input", e => {
   $("offsetVal").textContent = (player.offset >= 0 ? "+" : "") + player.offset + " ms";
   savePlayerTuning();
 });
-$("offset").addEventListener("change", () => { if (state.lines.length) replayLine(); });
+$("offset").addEventListener("change", () => {
+  if (player.bvid) saveBiliChoice(state.title, player.bvid, player.biliTitle);   // 按这首歌记住
+  if (state.lines.length) replayLine();
+});
 
 $("endAdj").addEventListener("input", e => {
   player.endAdj = parseInt(e.target.value, 10);
   $("endAdjVal").textContent = (player.endAdj >= 0 ? "+" : "") + player.endAdj + " ms";
   savePlayerTuning();
 });
-$("endAdj").addEventListener("change", () => { if (state.lines.length) replayLine(); });
+$("endAdj").addEventListener("change", () => {
+  if (player.bvid) saveBiliChoice(state.title, player.bvid, player.biliTitle);
+  if (state.lines.length) replayLine();
+});
 
 function savePlayerTuning() {
   try {
