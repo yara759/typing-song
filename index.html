@@ -155,6 +155,7 @@
         <button id="bnBiliGo" class="primary">用这个</button>
       </div>
       <div class="hint" id="biliMsg2"></div>
+      <div class="hint" id="biliCandidates"></div>
       <label style="margin-top:16px">音频直链：能直接播放的网址（.mp3 / .m4a）</label>
       <div class="row">
         <input type="text" id="urlInput2" class="grow" placeholder="https://....mp3">
@@ -282,6 +283,37 @@ function parseBiliRef(text) {
   const short = t.match(/b23\.tv\/([0-9A-Za-z]+)/i);
   if (short) return { shortUrl: "https://b23.tv/" + short[1] };
   return {};
+}
+
+function cleanBiliTitle(s) {
+  return String(s || "").replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").trim();
+}
+function durToMs(s) {
+  const m = String(s || "").match(/^(\d+):(\d{1,2})$/);
+  return m ? (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) * 1000 : 0;
+}
+
+// 从 B站 搜索结果里挑最像「原唱完整版」的那一条：
+// 先剔掉伴奏 / 纯音乐 / 钢琴吉他这类，再按时长跟歌词时长最接近的排。
+const BILI_BAD = /伴奏|纯音乐|纯音|钢琴|吉他|指弹|尤克里里|打击乐|架子鼓|卡拉|ktv|inst|instrumental|教程|教学|翻弹|演奏曲|清弹/i;
+const BILI_GOOD = /原唱|官方|mv|高音质|无损|完整版|音乐视频/i;
+
+function pickBestVideo(items, wantMs) {
+  let best = null, bestScore = -1e9;
+  for (const it of items) {
+    const t = it.title || "";
+    let s = 0;
+    if (BILI_BAD.test(t)) s -= 1000;
+    if (BILI_GOOD.test(t)) s += 60;
+    if (wantMs && it.durMs) {
+      const diff = Math.abs(it.durMs - wantMs) / 1000;
+      s -= Math.min(diff, 300);
+      if (diff <= 12) s += 80;
+      if (it.durMs > wantMs + 90000) s -= 200;   // 十几分钟的多半是合集
+    }
+    if (s > bestScore) { bestScore = s; best = it; }
+  }
+  return best;
 }
 
 /* ---------- 1. 歌词：lrclib 搜索 + LRC 解析 ---------- */
@@ -582,13 +614,14 @@ function saveProgress() {
 }
 
 /* ---------- 5. 界面接线 ---------- */
-function enterStage(lines, title, startIdx) {
+function enterStage(lines, title, startIdx, durationMs) {
   // 一律转成简体，再丢掉作词作曲这类制作信息
   state.lines = lines
     .map(l => ({ start: l.start, end: l.end, text: toSimplified(l.text).trim() }))
     .filter(l => normText(l.text) !== "" && !isCredit(l.text));
   if (!state.lines.length) { alert("没有可用的歌词行"); return; }
   state.title = toSimplified(title || "未命名");
+  state.durationMs = durationMs || 0;
   state.idx = 0;
   state.stats = { startedAt: 0, typed: 0, errors: 0, wrong: {}, done: false };
   $("songTitle").textContent = state.title;
@@ -608,8 +641,8 @@ function enterStage(lines, title, startIdx) {
   }
 }
 
-// 借中转服务问 B站 的搜索接口，取第一条视频的 BV 号
-async function autoFindBiliVideo(keyword) {
+// 借中转服务问 B站 的搜索接口
+async function autoFindBiliVideo(keyword, wantMs) {
   const api = "https://api.bilibili.com/x/web-interface/search/type?search_type=video&page=1&keyword=" +
     encodeURIComponent(keyword);
   const via = [
@@ -624,10 +657,20 @@ async function autoFindBiliVideo(keyword) {
       timer = setTimeout(() => ctl.abort(), 9000);
       const res = await fetch(build(api), { signal: ctl.signal });
       const text = await res.text();
-      const m = text.match(/"bvid"\s*:\s*"(BV[0-9A-Za-z]{8,})"/);
-      if (m) {
-        const t = text.match(/"title"\s*:\s*"([^"]{0,80})"/);
-        return { bvid: m[1], title: t ? t[1].replace(/<[^>]*>/g, "").replace(/&quot;/g, '"') : "" };
+      const items = [];
+      let json = null;
+      try { json = JSON.parse(text); } catch (e) {}
+      if (json && json.data && Array.isArray(json.data.result)) {
+        for (const r of json.data.result) {
+          if (r && r.bvid) items.push({ bvid: r.bvid, title: cleanBiliTitle(r.title), durMs: durToMs(r.duration) });
+        }
+      } else {
+        const re = /"bvid"\s*:\s*"(BV[0-9A-Za-z]{8,})"[\s\S]{0,500}?"title"\s*:\s*"([^"]{0,90})"/g;
+        let m; while ((m = re.exec(text)) !== null) items.push({ bvid: m[1], title: cleanBiliTitle(m[2]), durMs: 0 });
+      }
+      if (items.length) {
+        const best = pickBestVideo(items, wantMs);
+        if (best) { best.candidates = items.slice(0, 20); return best; }
       }
     } catch (e) {
     } finally {
@@ -641,16 +684,43 @@ async function autoAttachBili() {
   const kw = String(state.title || "").replace(/\s*[—\-|]\s*/g, " ").trim();
   if (!kw) return;
   setPlayState("🔍 正在自动找 B站 上这首歌的视频…");
-  const hit = await autoFindBiliVideo(kw);
+  const hit = await autoFindBiliVideo(kw, state.durationMs || 0);
   if (hit && hit.bvid) {
     player.bvid = hit.bvid;
     biliAutoPicked = true;
     player.biliTitle = hit.title;
+    lastCandidates = hit.candidates || [];
     updateAudioBanner();
     if (isContinuous()) startContinuousMusic(); else replayLine();   // 立刻从这一句开始唱
+    renderCandidates();
   } else {
     setPlayState("没自动找到 B站 视频，点上面横幅里的「B站视频」自己粘一个");
   }
+}
+
+let lastCandidates = [];
+
+// 把搜到的候选视频列出来，自动挑错了可以一键换
+function renderCandidates() {
+  const box = $("biliCandidates");
+  if (!box) return;
+  if (!lastCandidates.length) { box.innerHTML = ""; return; }
+  box.innerHTML = "<b>换个视频（按像原唱的程度排的）：</b><br>" +
+    lastCandidates.slice(0, 6).map((c, i) =>
+      '<button class="cand" data-bv="' + esc(c.bvid) + '" data-t="' + esc(c.title) + '">' +
+      (i + 1) + ". " + esc(c.title.slice(0, 26)) +
+      (c.durMs ? "（" + Math.floor(c.durMs / 60000) + ":" + String(Math.floor(c.durMs % 60000 / 1000)).padStart(2, "0") + "）" : "") +
+      "</button>").join("<br>");
+  box.querySelectorAll("button.cand").forEach(b => {
+    b.addEventListener("click", () => {
+      player.bvid = b.dataset.bv;
+      biliAutoPicked = true;
+      player.biliTitle = b.dataset.t;
+      updateAudioBanner();
+      if (isContinuous()) startContinuousMusic(); else replayLine();
+      $("biliMsg2").textContent = "已换成：" + b.dataset.t;
+    });
+  });
 }
 
 function startContinuousMusic() {
@@ -747,6 +817,7 @@ function updateAudioBanner() {
 // 微信内置浏览器里 prompt() 不可靠，所以这些都用页面上的输入框，不弹系统框
 function showAudioSetup(which) {
   $("audioSetup").classList.remove("hidden");
+  renderCandidates();
   const el = which === "url" ? $("urlInput2") : $("biliInput2");
   if (el) el.focus();
   $("audioSetup").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -824,7 +895,8 @@ async function doSearch() {
           return;
         }
         enterStage(parseLRC(item.syncedLyrics, item.duration ? item.duration * 1000 : 0),
-          item.trackName + " — " + item.artistName);
+          item.trackName + " — " + item.artistName, undefined,
+          item.duration ? item.duration * 1000 : 0);
       });
       box.appendChild(div);
     }
