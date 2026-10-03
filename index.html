@@ -75,6 +75,12 @@
   <h1>逐句打字</h1>
   <div class="sub">先唱这一句 → 你照着打这一句 → 打完自动唱下一句。单文件、无后端、无账号。</div>
 
+  <div id="wxTip" class="banner warn hidden">
+    <span>📱 你是在<b>微信里</b>打开这个网页的。微信不让网页自动出声，B站的播放器也可能加载不出来，
+      所以在微信里多半会没声音或卡住。<br>
+      <b>解决办法</b>：点右上角「···」→「在浏览器打开」，用手机自带浏览器打开这个网址，就一切正常了。</span>
+  </div>
+
   <section id="setup">
     <div class="card">
       <label>1. 搜歌词（数据来自 lrclib，国内直连，不用翻墙）</label>
@@ -112,6 +118,11 @@
       <div id="paneBili" class="hidden">
         <input type="text" id="bvid" placeholder="B站链接或 BV 号，例如 BV1xx411c7mD">
         <div class="hint" id="biliMsg"></div>
+        <div class="row" style="margin-top:14px">
+          <span class="mini">播放方式</span>
+          <button id="biliModeA">跟唱（手机推荐）</button>
+          <button id="biliModeB">按句停</button>
+        </div>
         <div class="hint" id="biliHint">
           粘一次链接就行，全程不用下载。开始后按句走：<b>唱这一句 → 停住等你打 → 打完自动唱下一句</b>。
           「上一句」「下一句」「重来本句」都会把播放器切到对应那一句，「暂停」会把播放器停掉不再出声。<br>
@@ -137,6 +148,23 @@
   <section id="stage" class="hidden">
     <div id="audioBanner" class="banner hidden"></div>
     <input type="file" id="fileLocal2" accept="audio/*,video/*" class="hidden">
+    <div id="audioSetup" class="card hidden">
+      <label>B站视频：粘贴链接 / BV 号 / 手机分享的 b23.tv 短链接</label>
+      <div class="row">
+        <input type="text" id="biliInput2" class="grow" placeholder="例如 BV1xx411c7mD，或 https://b23.tv/xxxxx">
+        <button id="bnBiliGo" class="primary">用这个</button>
+      </div>
+      <div class="hint" id="biliMsg2"></div>
+      <label style="margin-top:16px">音频直链：能直接播放的网址（.mp3 / .m4a）</label>
+      <div class="row">
+        <input type="text" id="urlInput2" class="grow" placeholder="https://....mp3">
+        <button id="bnUrlGo">用这个</button>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button id="bnFileGo">选本地音频文件</button>
+        <button id="bnSetupClose">收起</button>
+      </div>
+    </div>
     <div class="meta">
       <span id="songTitle">—</span>
       <span id="lineCounter">第 0 / 0 句</span>
@@ -154,6 +182,7 @@
         <button id="btnNext">下一句</button>
         <button id="btnPause">暂停</button>
         <button id="btnQuit">换一首</button>
+        <button id="btnSync" class="hidden">音乐回到本句</button>
         <span class="mini" id="playState"></span>
       </div>
     </div>
@@ -394,6 +423,12 @@ let target = { items: [], norm: "", normChars: [] };
 let typedNorm = "";
 let lastLen = 0;
 
+// 手机上浏览器普遍不让「自动播放带声音」，所以手机默认用「跟唱」：播放器只加载一次，
+// 靠你先点一下来起头，之后音乐一直放到底，不再需要反复点。
+let biliContinuous = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+function isContinuous() { return player.kind === "bili" && biliContinuous; }
+const IS_WECHAT = /MicroMessenger/i.test(navigator.userAgent);
+
 function buildTarget(text) {
   const items = [...text].map(ch => ({ ch, n: normChar(ch) }));
   return { items, norm: items.map(i => i.n).join(""), normChars: items.filter(i => i.n !== "").map(i => i.ch) };
@@ -467,6 +502,12 @@ function startLine(i, autoPlay) {
   if (!state.stats.startedAt) state.stats.startedAt = Date.now();
   saveProgress();
 
+  if (isContinuous()) {
+    $("btnSync").classList.remove("hidden");
+    setPlayState("♪ 跟唱中：你按自己的节奏打，音乐不会停下来等你");
+    return;
+  }
+  $("btnSync").classList.add("hidden");
   if (line.start === null) { setPlayState("（这一句没有时间轴，直接打）"); return; }
   if (!player.canPlay()) { setPlayState("⚠️ 现在没有声音，看上面那行的提示"); return; }
   if (autoPlay) {
@@ -496,13 +537,13 @@ function biliIframe(sec, autoplay) {
 
 function nextLine() {
   if (state.advanceTimer) { clearTimeout(state.advanceTimer); state.advanceTimer = null; }
-  player.stop();
+  if (!isContinuous()) player.stop();
   startLine(state.idx + 1, true);
 }
 
 function replayLine() {
   if (state.advanceTimer) { clearTimeout(state.advanceTimer); state.advanceTimer = null; }
-  player.stop();
+  if (!isContinuous()) player.stop();
   startLine(state.idx, true);
 }
 
@@ -555,6 +596,29 @@ function enterStage(lines, title, startIdx) {
   $("statsCard").classList.add("hidden");
   updateAudioBanner();
   startLine(typeof startIdx === "number" ? startIdx : 0, true);
+  if (isContinuous()) startContinuousMusic();   // 跟唱：这一次是手指点出来的，手机也出声
+}
+
+function startContinuousMusic() {
+  const first = state.lines.find(l => l.start !== null);
+  const sec = Math.max(0, ((first ? first.start : 0) + player.offset) / 1000 - 2);
+  $("biliHolder").innerHTML = biliIframe(sec, true);
+}
+
+function syncMusicToLine() {
+  const line = state.lines[state.idx];
+  if (!line || line.start === null) return;
+  const sec = Math.max(0, (line.start + player.offset) / 1000 - 2);
+  $("biliHolder").innerHTML = biliIframe(sec, true);
+  setPlayState("♪ 音乐已经跳回你正在打的这一句");
+}
+
+function setBiliMode(cont) {
+  biliContinuous = cont;
+  const a = $("biliModeA"), b = $("biliModeB");
+  if (a) a.classList.toggle("on", cont);
+  if (b) b.classList.toggle("on", !cont);
+  updateAudioBanner();
 }
 
 function backToSetup() {
@@ -587,56 +651,72 @@ function updateAudioBanner() {
       '<button id="bnPick" class="primary">本地文件</button>' +
       '<button id="bnBili">B站视频</button>' +
       '<button id="bnUrl">音频直链</button>' +
-      '<span class="mini">选好后这一句会立刻开始唱</span>';
+      '<span class="mini">' + (IS_WECHAT
+        ? "微信里出声需要你亲手点一下；实在不行，点右上角「···」→「在浏览器打开」"
+        : "选好后这一句会立刻开始唱") + '</span>';
   } else if (player.kind === "local" || player.kind === "url") {
     b.className = "banner good";
     html = "<span>🎵 " + (player.kind === "url" ? "网络音频：" : "音频已加载：") +
       esc(localFileName || "已选文件") + "</span>" +
       '<button id="bnPick">换一个</button>';
+  } else if (isContinuous()) {
+    b.className = "banner good";
+    html = "<span>🎵 跟唱中：音乐一直放到底，你在下面按自己的节奏打歌词。</span>" +
+      '<button id="bnPlayNow" class="primary">▶ 播放 / 回到本句</button>' +
+      '<span class="mini">微信里必须你亲手点一下才会出声，点这个按钮就行。</span>';
   } else {
     b.className = "banner good";
-    html = "<span>🎵 B站按句播放：上一句 / 下一句 / 重来本句 都会把播放器切到对应那一句，打完自动接下一句。</span>" +
-      '<span class="mini">每句开头要等播放器加载 1～2 秒；万一没声音，点一下播放器上的喇叭就行。</span>';
+    html = "<span>🎵 B站按句播放：打完一句自动接下一句。</span>" +
+      '<button id="bnPlayNow" class="primary">▶ 播放这一句</button>' +
+      '<span class="mini">微信里必须你亲手点一下才会出声，点这个按钮就行。</span>';
   }
   b.innerHTML = html;
   const pick = $("bnPick");
   if (pick) pick.addEventListener("click", () => $("fileLocal2").click());
   const bb = $("bnBili");
-  if (bb) bb.addEventListener("click", useBiliFromStage);
+  if (bb) bb.addEventListener("click", () => showAudioSetup("bili"));
   const bu = $("bnUrl");
-  if (bu) bu.addEventListener("click", useUrlFromStage);
+  if (bu) bu.addEventListener("click", () => showAudioSetup("url"));
+  const pn = $("bnPlayNow");
+  if (pn) pn.addEventListener("click", () => {
+    if (isContinuous()) { if ($("biliHolder").innerHTML.trim()) syncMusicToLine(); else startContinuousMusic(); }
+    else replayLine();
+  });
   const ly = $("bnLyric");
   if (ly) ly.addEventListener("click", backToSetup);
 }
 
 // 练习页里直接换音频来源，不用退回上一屏，也不会丢掉已经打过的进度
-async function useBiliFromStage() {
-  const v = prompt("粘贴 B站视频链接或 BV 号：\n（手机分享出来的 b23.tv 短链接，请点开它、等跳到视频页后，复制地址栏里的长网址）");
-  if (!v) return;
+// 微信内置浏览器里 prompt() 不可靠，所以这些都用页面上的输入框，不弹系统框
+function showAudioSetup(which) {
+  $("audioSetup").classList.remove("hidden");
+  const el = which === "url" ? $("urlInput2") : $("biliInput2");
+  if (el) el.focus();
+  $("audioSetup").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function applyBiliFromInput() {
+  const v = $("biliInput2").value.trim();
+  if (!v) { $("biliMsg2").textContent = "先把链接粘进去"; return; }
+  $("biliMsg2").textContent = "正在识别…";
   const r = await resolveBiliText(v);
   if (r.bv) {
     player.bvid = r.bv;
     pickSource("bili");
     updateAudioBanner();
-    replayLine();                       // 立刻从当前这一句开始唱
+    $("biliMsg2").innerHTML = "✅ 已识别：" + esc(r.bv) + (isContinuous() ? "（正在开始播放，若没声音点一下上面的播放按钮）" : "");
+    if (isContinuous()) startContinuousMusic(); else replayLine();
     return;
   }
-  const b = $("audioBanner");
-  b.className = "banner warn";
-  b.innerHTML = "<span>⚠️ " + esc(r.msg) + "</span>" +
-    (r.shortUrl ? '<button id="bnOpenShort2">打开这个短链接</button>' : "") +
-    '<button id="bnBili">重新粘一次</button>' +
-    '<button id="bnBiliBack">回去换</button>';
-  const o = $("bnOpenShort2");
-  if (o) o.addEventListener("click", () => window.open(r.shortUrl, "_blank"));
-  $("bnBili").addEventListener("click", useBiliFromStage);
-  $("bnBiliBack").addEventListener("click", backToSetup);
+  $("biliMsg2").innerHTML = "⚠️ " + esc(r.msg) +
+    (r.shortUrl ? '<br>短链接地址（可以长按复制，在浏览器里打开后把跳转到的长网址粘回来）：<br>' +
+      '<textarea rows="2" readonly>' + esc(r.shortUrl) + '</textarea>' : "");
 }
 
 function useUrlFromStage() {
-  const u = prompt("粘贴能直接播放的音频网址（在浏览器里打开就能放的那种，通常以 .mp3 / .m4a 结尾）：");
-  if (!u || !u.trim()) return;
-  localFileName = u.trim();
+  const u = $("urlInput2").value.trim();
+  if (!u) { $("biliMsg2").textContent = "先把音频网址粘进去"; return; }
+  localFileName = u;
   audioEl.src = localFileName;
   audioEl.load();
   pickSource("url");
@@ -761,18 +841,46 @@ async function resolveBiliText(text) {
   if (ref.bv) return { bv: ref.bv, msg: "✅ 已识别：" + ref.bv };
   if (ref.shortUrl) {
     const shortUrl = ref.shortUrl;
+    setBiliMsg("⏳ 正在自动展开这个短链接…");
+    const auto = await expandShortLink(shortUrl);
+    if (auto) return { bv: auto, msg: "✅ 已自动展开并识别：" + auto };
     try {
       const res = await fetch(shortUrl, { redirect: "follow" });
       const m2 = String(res.url || "").match(/BV[0-9A-Za-z]{8,}/);
-      if (m2) return { bv: m2[0], msg: "✅ 已识别：" + m2[0] };
+      if (m2) return { bv: m2[0], msg: "✅ 已自动展开并识别：" + m2[0] };
     } catch (e) {}
     return {
       bv: "", shortUrl,
-      msg: "这是手机分享出来的 B站短链接（b23.tv）。浏览器不让网页展开这种短链接，所以认不出里面的 BV 号。" +
+      msg: "这是手机分享出来的 B站短链接（b23.tv），自动展开没成功（可能是网络问题）。" +
         "点下面的按钮打开它，等它跳到视频页面后，把地址栏里那个长网址复制过来，粘回这里就行了。"
     };
   }
   return { bv: "", msg: "没认出来。请粘贴视频页面地址栏里的完整网址，或者直接输 BV 号（形如 BV1xx411c7mD）。" };
+}
+
+// 短链接自动展开：网页自己没法直接访问 b23.tv（跨域限制），
+// 只能借中转服务把页面取回来，再从中找出 BV 号。一个不行就换下一个。
+async function expandShortLink(shortUrl) {
+  const via = [
+    u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+    u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
+    u => "https://corsproxy.io/?" + encodeURIComponent(u)
+  ];
+  for (const build of via) {
+    let timer = null;
+    try {
+      const ctl = new AbortController();
+      timer = setTimeout(() => ctl.abort(), 9000);
+      const res = await fetch(build(shortUrl), { signal: ctl.signal });
+      const text = await res.text();
+      const m = text.match(/BV[0-9A-Za-z]{8,}/);
+      if (m) return m[0];
+    } catch (e) {
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  return "";
 }
 
 async function handleBiliInput(v) {
@@ -801,9 +909,22 @@ $("bvid").addEventListener("blur", e => {
 $("btnPrev").addEventListener("click", () => {
   if (state.idx <= 0) return;
   if (state.advanceTimer) { clearTimeout(state.advanceTimer); state.advanceTimer = null; }
-  player.stop();
+  if (!isContinuous()) player.stop();
   startLine(state.idx - 1, true);
 });
+
+$("btnSync").addEventListener("click", () => {
+  if ($("biliHolder").innerHTML.trim()) syncMusicToLine();
+  else startContinuousMusic();
+});
+$("bnBiliGo").addEventListener("click", applyBiliFromInput);
+$("biliInput2").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); applyBiliFromInput(); } });
+$("bnUrlGo").addEventListener("click", useUrlFromStage);
+$("bnFileGo").addEventListener("click", () => $("fileLocal2").click());
+$("bnSetupClose").addEventListener("click", () => $("audioSetup").classList.add("hidden"));
+$("biliModeA").addEventListener("click", () => setBiliMode(true));
+$("biliModeB").addEventListener("click", () => setBiliMode(false));
+setBiliMode(biliContinuous);
 
 $("btnReplay").addEventListener("click", replayLine);
 $("btnNext").addEventListener("click", () => nextLine());
@@ -855,6 +976,7 @@ document.addEventListener("keydown", e => {
 });
 
 pickSource("local");
+if (IS_WECHAT) $("wxTip").classList.remove("hidden");   // 微信里提前把话说清楚
 
 (function restore() {
   try {
