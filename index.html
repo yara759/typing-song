@@ -90,7 +90,7 @@
       </div>
       <div class="results" id="results"></div>
       <div class="hint">搜不到、或者搜出来的歌词不对？展开下面的「手动填歌词」，直接粘一份带时间轴的歌词进去就行。<br>
-        顺序随便你：先搜歌词、后选音频也照样能用——要是你直接点了搜索结果进练习页，顶部那条横幅里一样能选音频来源。</div>
+        <b>音频可以先不选</b>：直接点搜索结果进练习页，它会自己到 B站 找这首歌的视频自动播放，你只管打字。</div>
     </div>
 
     <div class="card">
@@ -423,9 +423,10 @@ let target = { items: [], norm: "", normChars: [] };
 let typedNorm = "";
 let lastLen = 0;
 
-// 手机上浏览器普遍不让「自动播放带声音」，所以手机默认用「跟唱」：播放器只加载一次，
-// 靠你先点一下来起头，之后音乐一直放到底，不再需要反复点。
-let biliContinuous = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+// 默认就是你要的节奏：唱一句 → 停住等你打 → 打对自动接下一句。
+// 「跟唱」是备选（播放器只加载一次，音乐不停），手机万一不出声可以切过去。
+let biliContinuous = false;
+let biliAutoPicked = false;   // B站视频是自动找到的，还是自己粘的
 function isContinuous() { return player.kind === "bili" && biliContinuous; }
 const IS_WECHAT = /MicroMessenger/i.test(navigator.userAgent);
 
@@ -597,6 +598,59 @@ function enterStage(lines, title, startIdx) {
   updateAudioBanner();
   startLine(typeof startIdx === "number" ? startIdx : 0, true);
   if (isContinuous()) startContinuousMusic();   // 跟唱：这一次是手指点出来的，手机也出声
+  // 没给音频的话，自动去 B站 找这首歌的视频，用户什么都不用做
+  if (player.kind !== "bili" && !player.bvid && !audioEl.src) {
+    player.kind = "bili";
+    pickSource("bili");
+    autoAttachBili();
+  } else if (player.kind === "bili" && !player.bvid) {
+    autoAttachBili();
+  }
+}
+
+// 借中转服务问 B站 的搜索接口，取第一条视频的 BV 号
+async function autoFindBiliVideo(keyword) {
+  const api = "https://api.bilibili.com/x/web-interface/search/type?search_type=video&page=1&keyword=" +
+    encodeURIComponent(keyword);
+  const via = [
+    u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+    u => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
+    u => "https://corsproxy.io/?" + encodeURIComponent(u)
+  ];
+  for (const build of via) {
+    let timer = null;
+    try {
+      const ctl = new AbortController();
+      timer = setTimeout(() => ctl.abort(), 9000);
+      const res = await fetch(build(api), { signal: ctl.signal });
+      const text = await res.text();
+      const m = text.match(/"bvid"\s*:\s*"(BV[0-9A-Za-z]{8,})"/);
+      if (m) {
+        const t = text.match(/"title"\s*:\s*"([^"]{0,80})"/);
+        return { bvid: m[1], title: t ? t[1].replace(/<[^>]*>/g, "").replace(/&quot;/g, '"') : "" };
+      }
+    } catch (e) {
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  return null;
+}
+
+async function autoAttachBili() {
+  const kw = String(state.title || "").replace(/\s*[—\-|]\s*/g, " ").trim();
+  if (!kw) return;
+  setPlayState("🔍 正在自动找 B站 上这首歌的视频…");
+  const hit = await autoFindBiliVideo(kw);
+  if (hit && hit.bvid) {
+    player.bvid = hit.bvid;
+    biliAutoPicked = true;
+    player.biliTitle = hit.title;
+    updateAudioBanner();
+    if (isContinuous()) startContinuousMusic(); else replayLine();   // 立刻从这一句开始唱
+  } else {
+    setPlayState("没自动找到 B站 视频，点上面横幅里的「B站视频」自己粘一个");
+  }
 }
 
 function startContinuousMusic() {
@@ -663,12 +717,15 @@ function updateAudioBanner() {
     b.className = "banner good";
     html = "<span>🎵 跟唱中：音乐一直放到底，你在下面按自己的节奏打歌词。</span>" +
       '<button id="bnPlayNow" class="primary">▶ 播放 / 回到本句</button>' +
-      '<span class="mini">微信里必须你亲手点一下才会出声，点这个按钮就行。</span>';
+      '<span class="mini">万一没声音，点一下这个按钮。</span>';
   } else {
     b.className = "banner good";
-    html = "<span>🎵 B站按句播放：打完一句自动接下一句。</span>" +
-      '<button id="bnPlayNow" class="primary">▶ 播放这一句</button>' +
-      '<span class="mini">微信里必须你亲手点一下才会出声，点这个按钮就行。</span>';
+    html = "<span>🎵 " + (biliAutoPicked && player.biliTitle
+        ? "已自动找到 B站 视频：" + esc(player.biliTitle)
+        : "B站按句播放") + " —— 唱一句 → 你打 → 打对自动接下一句。</span>" +
+      (biliAutoPicked ? '<button id="bnBili">换个视频</button>' : "") +
+      '<button id="bnPlayNow">▶ 重播这一句</button>' +
+      '<span class="mini">万一没声音，点一下「重播这一句」。</span>';
   }
   b.innerHTML = html;
   const pick = $("bnPick");
@@ -702,6 +759,8 @@ async function applyBiliFromInput() {
   const r = await resolveBiliText(v);
   if (r.bv) {
     player.bvid = r.bv;
+    biliAutoPicked = false;
+    player.biliTitle = "";
     pickSource("bili");
     updateAudioBanner();
     $("biliMsg2").innerHTML = "✅ 已识别：" + esc(r.bv) + (isContinuous() ? "（正在开始播放，若没声音点一下上面的播放按钮）" : "");
