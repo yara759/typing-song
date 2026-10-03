@@ -83,7 +83,8 @@
         <button class="primary" id="btnSearch">搜索</button>
       </div>
       <div class="results" id="results"></div>
-      <div class="hint">搜不到、或者搜出来的歌词不对？展开下面的「手动填歌词」，直接粘一份带时间轴的歌词进去就行。</div>
+      <div class="hint">搜不到、或者搜出来的歌词不对？展开下面的「手动填歌词」，直接粘一份带时间轴的歌词进去就行。<br>
+        顺序随便你：先搜歌词、后选音频也照样能用——要是你直接点了搜索结果进练习页，顶部那条横幅里一样能选音频来源。</div>
     </div>
 
     <div class="card">
@@ -110,6 +111,7 @@
       </div>
       <div id="paneBili" class="hidden">
         <input type="text" id="bvid" placeholder="B站链接或 BV 号，例如 BV1xx411c7mD">
+        <div class="hint" id="biliMsg"></div>
         <div class="hint" id="biliHint">
           粘一次链接就行，全程不用下载。开始后按句走：<b>唱这一句 → 停住等你打 → 打完自动唱下一句</b>。
           「上一句」「下一句」「重来本句」都会把播放器切到对应那一句，「暂停」会把播放器停掉不再出声。<br>
@@ -242,6 +244,16 @@ function toSimplified(s) {
 const CREDIT_RE = /^(作词|作曲|编曲|制作人|出品|监制|混音|录音|母带|和声|吉他|贝斯|键盘|弦乐|统筹|企划|发行|演唱|原唱|翻唱|纯音乐|instrumental)/i;
 const CREDIT_SHORT_RE = /^(词|曲)\s*[:：]/;
 function isCredit(text) { return CREDIT_RE.test(text) || CREDIT_SHORT_RE.test(text); }
+
+// 从用户粘进来的东西里认出 B站视频：完整网址里的 BV 号，或者手机分享的 b23.tv 短链接
+function parseBiliRef(text) {
+  const t = String(text || "").trim();
+  const direct = t.match(/BV[0-9A-Za-z]{8,}/);
+  if (direct) return { bv: direct[0] };
+  const short = t.match(/b23\.tv\/([0-9A-Za-z]+)/i);
+  if (short) return { shortUrl: "https://b23.tv/" + short[1] };
+  return {};
+}
 
 /* ---------- 1. 歌词：lrclib 搜索 + LRC 解析 ---------- */
 async function searchLyrics(query) {
@@ -560,35 +572,27 @@ function updateAudioBanner() {
   if (!state.lines.length) { b.classList.add("hidden"); return; }
   b.classList.remove("hidden");
   let html = "";
+  const hasAudio = (player.kind === "local" || player.kind === "url") ? !!audioEl.src
+                 : player.kind === "bili" ? !!player.bvid : false;
   if (!hasTimeline(state.lines)) {
     b.className = "banner warn";
     html = "<span>⚠️ 这份歌词没有时间轴，没法按句自动唱。</span>" +
       '<button id="bnLyric">回去换一份带时间轴的歌词</button>';
-  } else if (player.kind === "none") {
+  } else if (!hasAudio) {
     b.className = "banner warn";
-    html = "<span>🔇 现在是「不要音频」模式，所以听不到声音。</span>" +
-      '<button id="bnPick" class="primary">选个音频文件</button>';
-  } else if (player.kind === "local" && !audioEl.src) {
-    b.className = "banner warn";
-    html = "<span>⚠️ 还没选音频文件，所以只有歌词没有声音。</span>" +
-      '<button id="bnPick" class="primary">选音频文件</button>' +
+    const why = player.kind === "none" ? "现在是「不要音频」模式"
+              : player.kind === "bili" ? "还没填 B站视频"
+              : "还没选音频";
+    html = "<span>⚠️ " + why + "，所以只有歌词、没有声音。在这条横幅里直接选就行：</span>" +
+      '<button id="bnPick" class="primary">本地文件</button>' +
+      '<button id="bnBili">B站视频</button>' +
+      '<button id="bnUrl">音频直链</button>' +
       '<span class="mini">选好后这一句会立刻开始唱</span>';
-  } else if (player.kind === "local") {
+  } else if (player.kind === "local" || player.kind === "url") {
     b.className = "banner good";
-    html = "<span>🎵 音频已加载：" + esc(localFileName || "已选文件") + "</span>" +
+    html = "<span>🎵 " + (player.kind === "url" ? "网络音频：" : "音频已加载：") +
+      esc(localFileName || "已选文件") + "</span>" +
       '<button id="bnPick">换一个</button>';
-  } else if (player.kind === "url" && !audioEl.src) {
-    b.className = "banner warn";
-    html = "<span>⚠️ 还没有可用的音频网址，所以只有歌词没有声音。</span>" +
-      '<button id="bnPick" class="primary">回去填网址</button>';
-  } else if (player.kind === "url") {
-    b.className = "banner good";
-    html = "<span>🎵 网络音频：" + esc(localFileName || "已填链接") + "</span>" +
-      '<button id="bnPick">换一个</button>';
-  } else if (player.kind === "bili" && !player.bvid) {
-    b.className = "banner warn";
-    html = "<span>⚠️ 还没填 B站视频的 BV 号，所以只有歌词没有声音。</span>" +
-      '<button id="bnPick" class="primary">回去填 B站链接</button>';
   } else {
     b.className = "banner good";
     html = "<span>🎵 B站按句播放：上一句 / 下一句 / 重来本句 都会把播放器切到对应那一句，打完自动接下一句。</span>" +
@@ -596,12 +600,48 @@ function updateAudioBanner() {
   }
   b.innerHTML = html;
   const pick = $("bnPick");
-  if (pick) pick.addEventListener("click", () => {
-    if (player.kind === "url") backToSetup();
-    else $("fileLocal2").click();
-  });
+  if (pick) pick.addEventListener("click", () => $("fileLocal2").click());
+  const bb = $("bnBili");
+  if (bb) bb.addEventListener("click", useBiliFromStage);
+  const bu = $("bnUrl");
+  if (bu) bu.addEventListener("click", useUrlFromStage);
   const ly = $("bnLyric");
   if (ly) ly.addEventListener("click", backToSetup);
+}
+
+// 练习页里直接换音频来源，不用退回上一屏，也不会丢掉已经打过的进度
+async function useBiliFromStage() {
+  const v = prompt("粘贴 B站视频链接或 BV 号：\n（手机分享出来的 b23.tv 短链接，请点开它、等跳到视频页后，复制地址栏里的长网址）");
+  if (!v) return;
+  const r = await resolveBiliText(v);
+  if (r.bv) {
+    player.bvid = r.bv;
+    pickSource("bili");
+    updateAudioBanner();
+    replayLine();                       // 立刻从当前这一句开始唱
+    return;
+  }
+  const b = $("audioBanner");
+  b.className = "banner warn";
+  b.innerHTML = "<span>⚠️ " + esc(r.msg) + "</span>" +
+    (r.shortUrl ? '<button id="bnOpenShort2">打开这个短链接</button>' : "") +
+    '<button id="bnBili">重新粘一次</button>' +
+    '<button id="bnBiliBack">回去换</button>';
+  const o = $("bnOpenShort2");
+  if (o) o.addEventListener("click", () => window.open(r.shortUrl, "_blank"));
+  $("bnBili").addEventListener("click", useBiliFromStage);
+  $("bnBiliBack").addEventListener("click", backToSetup);
+}
+
+function useUrlFromStage() {
+  const u = prompt("粘贴能直接播放的音频网址（在浏览器里打开就能放的那种，通常以 .mp3 / .m4a 结尾）：");
+  if (!u || !u.trim()) return;
+  localFileName = u.trim();
+  audioEl.src = localFileName;
+  audioEl.load();
+  pickSource("url");
+  updateAudioBanner();
+  replayLine();
 }
 
 function loadLocalFile(f) {
@@ -696,14 +736,66 @@ $("btnUseUrl").addEventListener("click", () => {
   if (state.lines.length) replayLine();
 });
 
-$("bvid").addEventListener("input", e => {
-  const v = e.target.value.trim();
-  const m = v.match(/BV[0-9A-Za-z]+/);
-  player.bvid = m ? m[0] : "";
-  // 提前把播放器加载好，等下开始练的时候就不用等了
+/* ---------- B站链接识别：支持完整网址、BV 号，以及手机分享出来的 b23.tv 短链接 ---------- */
+function setBiliMsg(msg, shortUrl) {
+  const el = $("biliMsg");
+  if (!el) return;
+  if (!msg) { el.innerHTML = ""; return; }
+  el.innerHTML = esc(msg) +
+    (shortUrl ? '<br><button id="bnOpenShort">打开这个短链接</button>' : "");
+  const b = $("bnOpenShort");
+  if (b) b.addEventListener("click", () => window.open(shortUrl, "_blank"));
+}
+
+function warmBili() {
   if (player.bvid && player.kind === "bili" && !state.lines.length) {
-    $("biliHolder").innerHTML = biliIframe(0, false);
+    $("biliHolder").innerHTML = biliIframe(0, false);   // 提前把播放器加载好
   }
+}
+
+// 把用户粘的东西解析成 BV 号。b23.tv 短链接会尝试展开，展不开就把短链接交回给界面去引导用户。
+async function resolveBiliText(text) {
+  const t = String(text || "").trim();
+  if (!t) return { bv: "", msg: "" };
+  const ref = parseBiliRef(t);
+  if (ref.bv) return { bv: ref.bv, msg: "✅ 已识别：" + ref.bv };
+  if (ref.shortUrl) {
+    const shortUrl = ref.shortUrl;
+    try {
+      const res = await fetch(shortUrl, { redirect: "follow" });
+      const m2 = String(res.url || "").match(/BV[0-9A-Za-z]{8,}/);
+      if (m2) return { bv: m2[0], msg: "✅ 已识别：" + m2[0] };
+    } catch (e) {}
+    return {
+      bv: "", shortUrl,
+      msg: "这是手机分享出来的 B站短链接（b23.tv）。浏览器不让网页展开这种短链接，所以认不出里面的 BV 号。" +
+        "点下面的按钮打开它，等它跳到视频页面后，把地址栏里那个长网址复制过来，粘回这里就行了。"
+    };
+  }
+  return { bv: "", msg: "没认出来。请粘贴视频页面地址栏里的完整网址，或者直接输 BV 号（形如 BV1xx411c7mD）。" };
+}
+
+async function handleBiliInput(v) {
+  const r = await resolveBiliText(v);
+  player.bvid = r.bv || "";
+  if (r.bv) {
+    const inp = $("bvid");
+    if (inp && !inp.value.includes(r.bv)) inp.value = r.bv;
+    warmBili();
+  }
+  setBiliMsg(r.msg, r.shortUrl);
+  updateAudioBanner();
+}
+
+let biliParseTimer = null;
+$("bvid").addEventListener("input", e => {
+  if (biliParseTimer) clearTimeout(biliParseTimer);
+  const v = e.target.value;
+  biliParseTimer = setTimeout(() => handleBiliInput(v), 600);
+});
+$("bvid").addEventListener("blur", e => {
+  if (biliParseTimer) clearTimeout(biliParseTimer);
+  handleBiliInput(e.target.value);
 });
 
 $("btnPrev").addEventListener("click", () => {
