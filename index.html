@@ -206,6 +206,10 @@
         <input type="range" id="endAdj" min="-3000" max="3000" step="100" value="0" style="flex:1 1 200px">
         <span class="mini" id="endAdjVal" style="min-width:76px">+0 ms</span>
       </div>
+      <div class="row" style="margin-top:12px">
+        <button id="btnCalib" class="primary">🎯 一键校准（听到第一句就点）</button>
+        <span class="mini" id="calibMsg"></span>
+      </div>
       <div class="hint">
         <b>对不齐微调</b>：整首歌整体对不上时用——你打的这句歌词和实际唱的不是同一句，就往左或往右拖（比如视频开头有前奏，就要往右加几秒）。<br>
         <b>每句结尾</b>：整体对齐后还差一点的用——某句歌没唱完就停了往右拖，唱到下一句还没停就往左拖。<br>
@@ -693,6 +697,7 @@ function enterStage(lines, title, startIdx, durationMs) {
 // 否则会出现「换了歌，唱的还是上一首」这种串台，链接框里也还留着上一首的地址
 function resetAudioForNewSong() {
   player.stop();
+  cancelCalib();
   const h = $("biliHolder"); if (h) h.innerHTML = "";
   try { audioEl.pause(); audioEl.removeAttribute("src"); audioEl.load(); } catch (e) {}
   localFileName = "";
@@ -808,7 +813,84 @@ function applyTuning(offset, endAdj) {
   savePlayerTuning();
 }
 
+$("btnCalib").addEventListener("click", () => {
+  if (calibState === "waiting_tap") finishCalib();
+  else if (calibState === "idle") startCalib();
+});
+
 let lastCandidates = [];
+
+/* ---------- 一键校准：听着第一句，点一下，把视频时间和歌词时间对上 ---------- */
+// B站播放器有时会主动往父页面报当前播放时间；能收到的话就用它，比估算准得多
+let biliReportedMs = null, biliReportedAt = 0;
+function digTime(o, depth) {
+  if (!o || typeof o !== "object" || depth > 4) return null;
+  for (const k of Object.keys(o)) {
+    if (/^(currentTime|time|ts|progress|playedTime)$/i.test(k)) {
+      const v = Number(o[k]);
+      if (isFinite(v) && v >= 0 && v < 36000) return v;
+    }
+    const r = digTime(o[k], depth + 1);
+    if (r !== null) return r;
+  }
+  return null;
+}
+window.addEventListener("message", e => {
+  if (typeof e.origin !== "string" || e.origin.indexOf("bilibili.com") < 0) return;
+  let d = e.data;
+  if (typeof d === "string") { try { d = JSON.parse(d); } catch (err) { return; } }
+  const t = digTime(d, 0);
+  if (t !== null) { biliReportedMs = t * 1000; biliReportedAt = Date.now(); }
+});
+
+let calibState = "idle", calSeekMs = 0, calT0 = 0;
+function startCalib() {
+  const first = state.lines.find(l => l.start !== null);
+  if (!first) { $("calibMsg").textContent = "这首歌的歌词没有时间轴，没法校准"; return; }
+  calSeekMs = Math.max(0, first.start + player.offset - 6000);   // 从第一句前 6 秒开始放
+  player.stop();
+  const holder = $("biliHolder");
+  holder.innerHTML = biliIframe(calSeekMs / 1000, true);
+  calibState = "waiting_load";
+  $("btnCalib").textContent = "加载中…";
+  $("calibMsg").textContent = "等播放器加载完，听到第一句歌词就点这个按钮";
+  const arm = () => {
+    if (calibState !== "waiting_load") return;
+    calT0 = Date.now();
+    calibState = "waiting_tap";
+    $("btnCalib").textContent = "🎯 就是现在，点！";
+    setTimeout(() => { if (calibState === "waiting_tap") { cancelCalib(); $("calibMsg").textContent = "校准超时了，想校准再点一次"; } }, 45000);
+  };
+  const fr = holder.querySelector("iframe");
+  if (fr) fr.addEventListener("load", () => setTimeout(arm, 300), { once: true });
+  setTimeout(() => { if (calibState === "waiting_load") arm(); }, 8000);
+}
+
+function finishCalib() {
+  const first = state.lines.find(l => l.start !== null);
+  if (!first) return;
+  let songMs;
+  if (biliReportedMs !== null && Date.now() - biliReportedAt < 1500) {
+    songMs = biliReportedMs;                                  // 播放器自己报的时间，最准
+  } else {
+    songMs = calSeekMs + (Date.now() - calT0) - 800;           // 退路：按加载完成的时间推算
+  }
+  const newOffset = Math.max(-30000, Math.min(30000, Math.round(songMs - first.start)));
+  applyTuning(newOffset, player.endAdj);
+  if (player.bvid) saveBiliChoice(state.title, player.bvid, player.biliTitle);
+  calibState = "idle";
+  $("btnCalib").textContent = "🎯 一键校准（听到第一句就点）";
+  $("calibMsg").textContent = "已对齐，偏移 " + (newOffset >= 0 ? "+" : "") + newOffset +
+    " 毫秒，正在重播这一句给你验收";
+  player.stop();
+  if (isContinuous()) startContinuousMusic(); else replayLine();
+}
+
+function cancelCalib() {
+  calibState = "idle";
+  const b = $("btnCalib");
+  if (b) b.textContent = "🎯 一键校准（听到第一句就点）";
+}
 
 // 把搜到的候选视频列出来，自动挑错了可以一键换
 function renderCandidates() {
